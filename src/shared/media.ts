@@ -176,3 +176,30 @@ export function planFeed(m: MediaInfo): FeedPlan {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// YouTube: owner requested BOTH a Short and a regular video for every clip.
+// YouTube classifies an upload as a Short when it is vertical/square and <= 3 min, so:
+//  - the Short is the original if it already qualifies, otherwise the complete frame letterboxed to 1080x1920;
+//  - the regular video is the original if it is not Short-shaped, otherwise the complete frame pillarboxed
+//    onto a 1920x1080 widescreen canvas (black side bars, nothing cropped or stretched).
+export const SHORT_MAX_SEC = 180;
+export const WIDESCREEN_CANVAS = { width: 1920, height: 1080 } as const;
+
+export interface YouTubeVersions {
+  short: { kind: "original" | "vertical_canvas" | "impossible"; reason: string };
+  regular: { kind: "original" | "widescreen_canvas"; reason: string };
+}
+
+export function planYouTubeVersions(m: MediaInfo): YouTubeVersions {
+  const short: YouTubeVersions["short"] =
+    m.durationSec > SHORT_MAX_SEC
+      ? { kind: "impossible", reason: `video is ${m.durationSec.toFixed(0)} s; Shorts are limited to 3 min, so no Short is made (nothing is cut)` }
+      : isPortraitOrSquare(m)
+        ? { kind: "original", reason: "original file already qualifies as a Short (vertical/square, ≤ 3 min)" }
+        : { kind: "vertical_canvas", reason: `horizontal ${m.width}x${m.height}: complete frame letterboxed onto a 1080x1920 canvas for the Short (no crop, no stretch)` };
+  const regular: YouTubeVersions["regular"] = qualifiesAsShort(m)
+    ? { kind: "widescreen_canvas", reason: `${m.width}x${m.height} would be classified as a Short, so the regular video places the complete frame on a 1920x1080 widescreen canvas with black side bars (no crop, no stretch)` }
+    : { kind: "original", reason: "original file is already a regular (non-Short) video" };
+  return { short, regular };
+}

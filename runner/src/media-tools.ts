@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { statSync } from "node:fs";
 import type { MediaInfo, StorySegment } from "../../src/shared/media";
-import { STORY_CANVAS } from "../../src/shared/media";
+import { STORY_CANVAS, WIDESCREEN_CANVAS } from "../../src/shared/media";
 
 const run = promisify(execFile);
 
@@ -38,14 +38,24 @@ export async function probe(path: string): Promise<MediaInfo> {
 }
 
 /**
- * Story rendition: scale the COMPLETE frame to fit inside 1080x1920 (aspect preserved, no crop, no stretch),
- * pad the remainder with black, H.264/AAC MP4 with faststart. Optionally a time range for segmented Stories.
+ * Fit the COMPLETE frame inside a canvas (aspect preserved, no crop, no stretch), pad the rest with black,
+ * H.264/AAC MP4 with faststart, bitrate-capped so renditions stay small. Optional time range (Story parts).
  */
-export async function renderStory(src: string, dest: string, info: MediaInfo, segment?: StorySegment): Promise<void> {
-  const { width: W, height: H } = STORY_CANVAS;
+export async function renderCanvas(src: string, dest: string, info: MediaInfo, canvas: { width: number; height: number }, segment?: StorySegment): Promise<void> {
+  const { width: W, height: H } = canvas;
   const vf = `scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${Math.min(60, Math.max(24, Math.round(info.fps)))},format=yuv420p`;
   const args = ["-y", "-v", "error"];
   if (segment) args.push("-ss", String(segment.startSec), "-t", String(segment.durationSec));
-  args.push("-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-g", String(Math.round(info.fps * 2)), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", dest);
+  args.push("-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-maxrate", "4M", "-bufsize", "8M", "-profile:v", "high", "-g", String(Math.round(info.fps * 2)), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", dest);
   await run("ffmpeg", args, { maxBuffer: 10 * 1024 * 1024 });
+}
+
+/** Story rendition: complete frame letterboxed onto 1080x1920. */
+export function renderStory(src: string, dest: string, info: MediaInfo, segment?: StorySegment): Promise<void> {
+  return renderCanvas(src, dest, info, STORY_CANVAS, segment);
+}
+
+/** Regular-YouTube rendition of a Short-shaped clip: complete frame pillarboxed onto 1920x1080. */
+export function renderWidescreen(src: string, dest: string, info: MediaInfo): Promise<void> {
+  return renderCanvas(src, dest, info, WIDESCREEN_CANVAS);
 }

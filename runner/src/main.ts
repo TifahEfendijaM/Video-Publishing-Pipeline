@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { loadConfig, secrets, type PipelineConfig } from "./config";
 import { StateClient } from "./state-client";
 import { Drive, DRIVE_SCOPES, serviceAccountEmail, serviceAccountToken, oauthAccessToken, syncEntryTimes } from "./google";
-import { probe, renderStory } from "./media-tools";
+import { probe, renderStory, renderCanvas, renderWidescreen } from "./media-tools";
 import { makeCaptions } from "./captioner";
 import { KvHosting, R2Hosting } from "./hosting";
 import { statSync } from "node:fs";
@@ -20,7 +20,7 @@ import { anyMayBeLive, buildTasks, executeTasks, type Identities, type Providers
 import { Summary, statusLabel } from "./summary";
 import { NO_ELIGIBLE_MESSAGE, selectVideo, type FolderVideo, type SelectionPolicy, type VideoRecord } from "../../src/shared/selection";
 import { ScheduleParseError, formatSchedule, parseSchedule } from "../../src/shared/schedule";
-import { planFeed, planStory } from "../../src/shared/media";
+import { planFeed, planStory, planYouTubeVersions } from "../../src/shared/media";
 import { redact, summarizeError } from "../../src/shared/redact";
 import { isRetryable, type PublicationStatus } from "../../src/shared/status";
 
@@ -61,7 +61,7 @@ async function providers(state: StateClient): Promise<Providers> {
   const bufferKey = sec("BUFFER_API_KEY");
   if (bufferKey) p.buffer = new Buffer(bufferKey, cfg.polling.bufferMaxMinutes);
   const upKey = sec("UPLOAD_POST_API_KEY");
-  if (upKey) p.uploadPost = new UploadPost(upKey, cfg.destinations.youtube.uploadPostProfile, cfg.polling.uploadPostMaxMinutes);
+  if (upKey) p.uploadPost = new UploadPost(upKey, cfg.destinations.youtube.regular.uploadPostProfile, cfg.polling.uploadPostMaxMinutes);
   const [id, secret, refresh] = [sec("YOUTUBE_CLIENT_ID"), sec("YOUTUBE_CLIENT_SECRET"), sec("YOUTUBE_REFRESH_TOKEN")];
   if (id && secret && refresh) {
     const t = await oauthAccessToken({ clientId: id, clientSecret: secret, refreshToken: refresh, encryptionKey: sec("CREDENTIALS_ENCRYPTION_KEY"), state, credentialName: "youtube_refresh_token" });
@@ -78,7 +78,7 @@ async function identities(p: Providers): Promise<Identities> {
   const instagram = p.meta && facebook.ok ? await p.meta.verifyInstagram(d.facebook.expectedPageId, d.instagram.expectedUserId, d.instagram.expectedUsername) : p.meta ? { ok: false, detail: "Facebook Page not verified, so its linked Instagram cannot be verified" } : missing("META_PAGE_ACCESS_TOKEN");
   const tiktok = p.buffer ? await p.buffer.verifyChannel(d.tiktok.expectedBufferChannelId, "tiktok", d.tiktok.expectedUsername) : missing("BUFFER_API_KEY");
   const youtube = p.youtube ? await p.youtube.verify(d.youtube.expectedChannelId, d.youtube.expectedChannelHandle, p.youtubeScopes ?? []) : missing("YouTube OAuth credentials");
-  const youtubeBuffer = p.buffer && d.youtube.bufferChannelId ? await p.buffer.verifyChannel(d.youtube.bufferChannelId, "youtube", null) : { ok: false, detail: "no YouTube channel connected in Buffer (youtube.bufferChannelId empty)" };
+  const youtubeBuffer = p.buffer && d.youtube.short.bufferChannelId ? await p.buffer.verifyChannel(d.youtube.short.bufferChannelId, "youtube", null) : { ok: false, detail: "no YouTube channel connected in Buffer (youtube.short.bufferChannelId empty)" };
   const youtubeUploadPost = p.uploadPost ? await p.uploadPost.verify(d.youtube.expectedChannelHandle) : missing("UPLOAD_POST_API_KEY");
   return { instagram, facebook, tiktok, youtube, youtubeBuffer, youtubeUploadPost };
 }
@@ -187,6 +187,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     await d.download(v.id, original);
     const info = await probe(original);
     const feed = planFeed(info);
+    const ytPlan = planYouTubeVersions(info);
     const storyPlan = planStory(info, cfg.stories.longVideoPolicy);
     s.h(2, "Media");
     s.kv([
@@ -198,7 +199,8 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       ["Instagram", `Reel${feed.instagram.check.ok ? "" : ` — incompatible: ${feed.instagram.check.problems.join("; ")}`}`],
       ["Facebook", feed.facebook.reason],
       ["TikTok", feed.tiktok.check.ok ? "video post" : `incompatible: ${feed.tiktok.check.problems.join("; ")}`],
-      ["YouTube", feed.youtube.reason],
+      ["YouTube Short", ytPlan.short.reason],
+      ["YouTube regular video", ytPlan.regular.reason],
       ["Stories", storyPlan.kind === "single" ? (storyPlan.needsRendition ? `Story rendition: ${storyPlan.renditionReason}` : "original file used") : storyPlan.kind === "segmented" ? storyPlan.renditionReason : storyPlan.reason],
     ]);
 
@@ -213,6 +215,20 @@ async function publishFlow(o: PublishOpts): Promise<string> {
         await renderStory(original, p, info, seg);
         stories.files.push({ path: p, surface: `story_part_${seg.index}`, label: `${seg.index}/${seg.count}` });
       }
+    }
+    const youtube = { plan: ytPlan, shortPath: null as string | null, regularPath: null as string | null };
+    if (cfg.destinations.youtube.enabled) {
+      if (cfg.destinations.youtube.short.enabled && ytPlan.short.kind === "vertical_canvas") {
+        youtube.shortPath = join(work, "youtube_short.mp4");
+        await renderCanvas(original, youtube.shortPath, info, { width: 1080, height: 1920 });
+      }
+      if (cfg.destinations.youtube.regular.enabled && ytPlan.regular.kind === "widescreen_canvas") {
+        youtube.regularPath = join(work, "youtube_video.mp4");
+        await renderWidescreen(original, youtube.regularPath, info);
+      }
+    }
+    if (o.preview && env("PREVIEW_DIR")) {
+      for (const [name, p] of [["youtube_short", youtube.shortPath], ["youtube_video", youtube.regularPath]] as const) if (p) copyFileSync(p, join(env("PREVIEW_DIR"), `${name}.mp4`));
     }
     if (o.preview && stories.files.length && env("PREVIEW_DIR")) {
       for (const f of stories.files) copyFileSync(f.path, join(env("PREVIEW_DIR"), `${f.surface}.mp4`));
@@ -234,7 +250,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     s.h(2, "Destination identity checks");
     s.table(["Destination", "Verified", "Detail"], Object.entries(ids).map(([k, c]) => [k, c.ok ? "✅" : "❌", c.detail]));
 
-    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids });
+    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube });
     if (o.filter) tasks = tasks.filter((t) => o.filter!.has(`${t.platform}:${t.surface}`));
 
     if (o.preview) {
@@ -373,8 +389,8 @@ async function cmdConfigure() {
   s.h(2, "Effective saved configuration");
   s.kv(settingsRows(view.settings, view.nextOccurrences));
   const perMonth = Math.round(view.settings.scheduleEffective.length * 4.35 * 10) / 10;
-  if (cfg.destinations.youtube.provider === "upload_post" && perMonth > cfg.destinations.youtube.uploadPostMonthlyLimit) {
-    s.p(`⚠️ This schedule means about ${perMonth} videos per month, but Upload-Post's free plan allows ${cfg.destinations.youtube.uploadPostMonthlyLimit} YouTube uploads per month. Once the limit is reached, YouTube uploads are refused (never billed) and reported as failed until the next month.`);
+  if (cfg.destinations.youtube.regular.enabled && perMonth > cfg.destinations.youtube.regular.uploadPostMonthlyLimit) {
+    s.p(`⚠️ This schedule means about ${perMonth} videos per month, but Upload-Post's free plan allows ${cfg.destinations.youtube.regular.uploadPostMonthlyLimit} uploads per month (used for the regular YouTube video). Once the limit is reached, those uploads are refused (never billed) and reported as failed until the next month.`);
   }
   if (!view.settings.publishingEnabled) s.p("⚠️ The live publishing kill switch is OFF: scheduled runs will run and report, but will not publish until it is switched on (Tools → publishing_enable).");
   s.write();
@@ -535,7 +551,7 @@ async function verify(s: Summary, state: StateClient) {
     const b = sec("BUFFER_API_KEY");
     if (b) prov.buffer = new Buffer(b, 1);
     const u = sec("UPLOAD_POST_API_KEY");
-    if (u) prov.uploadPost = new UploadPost(u, cfg.destinations.youtube.uploadPostProfile, 1);
+    if (u) prov.uploadPost = new UploadPost(u, cfg.destinations.youtube.regular.uploadPostProfile, 1);
   }
   const ids = await identities(prov);
   for (const [k, c] of Object.entries(ids)) add(`Identity: ${k}`, c.ok, c.detail);
@@ -554,7 +570,8 @@ async function verify(s: Summary, state: StateClient) {
     }
   }
   const y = cfg.destinations.youtube;
-  add("YouTube public-upload route", y.provider === "upload_post" ? !!prov.uploadPost : y.apiProjectAudited, y.provider === "upload_post" ? `Upload-Post (audited integration, public uploads; free plan ${y.uploadPostMonthlyLimit} uploads/month)${prov.uploadPost ? "" : " — UPLOAD_POST_API_KEY missing"}. Fallback without it: private upload via the official API.` : y.apiProjectAudited ? "official API, audited" : "official API NOT audited: uploads would be private");
+  add("YouTube Short route (Buffer)", !!y.short.bufferChannelId && !!prov.buffer, y.short.bufferChannelId ? "Shorts via Buffer (public)" : "youtube.short.bufferChannelId not set — connect @EasyBosnian in Buffer");
+  add("YouTube regular-video route (Upload-Post)", !!prov.uploadPost, prov.uploadPost ? `Upload-Post (audited integration, public; free plan ${y.regular.uploadPostMonthlyLimit} uploads/month)` : `UPLOAD_POST_API_KEY missing — fallback: ${y.regular.fallbackPrivateOfficialApi ? "PRIVATE upload via the official API (manual publishing)" : "manual upload"}`);
   add("YouTube OAuth app status", null, "Must be 'In production' in Google Cloud (Testing-status refresh tokens expire after 7 days). Not readable via API — confirm in the console.");
   const url = env("STATE_API_URL");
   const token = sec("STATE_API_TOKEN");
@@ -600,7 +617,7 @@ async function reconcile(s: Summary, state: StateClient) {
   const bk = sec("BUFFER_API_KEY");
   if (!prov.buffer && bk) prov.buffer = new Buffer(bk, 0);
   const uk = sec("UPLOAD_POST_API_KEY");
-  if (!prov.uploadPost && uk) prov.uploadPost = new UploadPost(uk, cfg.destinations.youtube.uploadPostProfile, 0);
+  if (!prov.uploadPost && uk) prov.uploadPost = new UploadPost(uk, cfg.destinations.youtube.regular.uploadPostProfile, 0);
   const rows: string[][] = [];
   for (const p of open) {
     let o = null as null | { status: string; url?: string | null; detail?: string | null; remoteId?: string | null };

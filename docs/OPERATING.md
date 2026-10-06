@@ -61,15 +61,22 @@ Ordering uses the time a file was uploaded or moved into the folder, from the **
 no activity record exists, and is labelled "created time approximation" in summaries. Ties are broken by
 Drive file ID.
 
-## YouTube
+## YouTube: a Short AND a regular video for every clip
 
-Each video is uploaded **once**, publicly, via Upload-Post. YouTube has no separate "Shorts upload": it
-classifies the upload itself — vertical or square and up to 3 minutes = a **Short** (all your clips),
-anything else = a regular video. The pipeline never uploads the same clip twice (that would be a duplicate
-on the channel) and never reshapes a vertical clip into a horizontal one.
+YouTube treats an upload as a **Short** when it is vertical or square and at most 3 minutes, and as a
+**regular video** otherwise. To get both from one clip, the pipeline makes the missing shape without
+cutting anything:
 
-Upload-Post's free plan allows 10 uploads per month; when it is used up, YouTube is reported as failed
-for that run (nothing is billed) and can be re-attempted next month with `retry_failed`.
+| Source clip | Regular video (Upload-Post) | Short (Buffer) |
+|---|---|---|
+| Horizontal (16:9), ≤ 3 min | original file | whole frame placed in a 1080×1920 vertical frame, black bars above and below |
+| Vertical / square, ≤ 3 min | whole frame placed in a 1920×1080 widescreen frame, black bars left and right | original file |
+| Longer than 3 min | original file | none (Shorts max 3 min) — reported, nothing is cut |
+
+The shape is read from each file with ffprobe, so mixed folders work. The `preview` tool attaches both
+versions as a private artifact. Note: posting the same clip twice on one channel is your explicit choice;
+YouTube may treat near-duplicate uploads as repetitive content, so keep an eye on channel feedback.
+Upload-Post's free plan (10/month) is used only for the regular video.
 
 ## What "same video" means (Drive file ID)
 

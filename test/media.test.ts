@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planFeed, planStory, storySegments, type MediaInfo } from "../src/shared/media";
+import { planFeed, planStory, planYouTubeVersions, storySegments, type MediaInfo } from "../src/shared/media";
 
 const base: MediaInfo = {
   durationSec: 8,
@@ -84,5 +84,23 @@ describe("Stories", () => {
 
   it("too short for a Story", () => {
     expect(planStory({ ...base, durationSec: 2 }, "skip").kind).toBe("none");
+  });
+});
+
+describe("YouTube Short + regular video versions", () => {
+  it("horizontal: regular = original, Short = letterboxed vertical canvas", () => {
+    const p = planYouTubeVersions(base);
+    expect(p.regular.kind).toBe("original");
+    expect(p.short.kind).toBe("vertical_canvas");
+    expect(p.short.reason).toMatch(/no crop, no stretch/);
+  });
+  it("vertical: Short = original, regular = widescreen canvas", () => {
+    const p = planYouTubeVersions(vertical);
+    expect(p.short.kind).toBe("original");
+    expect(p.regular.kind).toBe("widescreen_canvas");
+  });
+  it("over 3 min cannot be a Short", () => {
+    expect(planYouTubeVersions({ ...base, durationSec: 200 }).short.kind).toBe("impossible");
+    expect(planYouTubeVersions({ ...vertical, durationSec: 200 }).regular.kind).toBe("original");
   });
 });

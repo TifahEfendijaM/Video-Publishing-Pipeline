@@ -9,8 +9,8 @@ import { AmbiguousOutcome, SafeFailure } from "../src/shared/status";
 import { redact, registerSecret } from "../src/shared/redact";
 import { makeCaptions } from "../runner/src/captioner";
 import { encrypt, decrypt } from "../runner/src/google";
-import { probe, renderStory, parseProbe } from "../runner/src/media-tools";
-import { planFeed, planStory, storySegments } from "../src/shared/media";
+import { probe, renderStory, renderWidescreen, renderCanvas, parseProbe } from "../runner/src/media-tools";
+import { planFeed, planStory, planYouTubeVersions, storySegments } from "../src/shared/media";
 import { loadConfig } from "../runner/src/config";
 import { Summary } from "../runner/src/summary";
 import { UploadPost } from "../runner/src/providers/uploadpost";
@@ -118,7 +118,6 @@ describe("buildTasks routing", () => {
   const vertical = { ...horizontal, width: 1080, height: 1920 };
   const allOk: Identities = { instagram: { ok: true, detail: "" }, facebook: { ok: true, detail: "" }, tiktok: { ok: true, detail: "" }, youtube: { ok: true, detail: "" }, youtubeBuffer: { ok: true, detail: "" }, youtubeUploadPost: { ok: true, detail: "" } };
   const fakeProviders = { meta: {} as any, buffer: {} as any, youtube: {} as any, uploadPost: {} as any };
-  const auto = () => { const c = structuredClone(cfg); c.destinations.youtube.provider = "auto"; return c; };
   const caps = { caption: "x", youtubeTitle: "t", youtubeDescription: "d" };
   const build = (info: any, c = cfg, ids = allOk) =>
     buildTasks({ cfg: c, info, feed: planFeed(info), stories: { plan: planStory(info, c.stories.longVideoPolicy), files: [] }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: ids });
@@ -129,34 +128,32 @@ describe("buildTasks routing", () => {
     expect(t.find((x) => x.platform === "tiktok" && x.surface === "feed")!.provider).toBe("buffer");
   });
 
-  it("YouTube default: ONE public upload via Upload-Post for Shorts and regular videos alike", () => {
-    const v = build(vertical).find((x) => x.platform === "youtube")!;
-    const h = build(horizontal).find((x) => x.platform === "youtube")!;
-    expect([v.provider, v.format]).toEqual(["upload_post", "short"]);
-    expect([h.provider, h.format]).toEqual(["upload_post", "video"]);
-    expect(build(vertical).filter((x) => x.platform === "youtube")).toHaveLength(1);
-    const ids = { ...allOk, youtubeUploadPost: { ok: false, detail: "profile has no YouTube" } };
-    expect(build(vertical, cfg, ids).find((x) => x.platform === "youtube")!.blocked!.status).toBe("disabled");
+  const withYt = (info: any, c = cfg, ids = allOk, prov: any = fakeProviders) =>
+    buildTasks({ cfg: c, info, feed: planFeed(info), stories: { plan: planStory(info, "segment"), files: [] }, originalPath: "/o.mp4", captions: caps, providers: prov, identities: ids, youtube: { plan: planYouTubeVersions(info), shortPath: planYouTubeVersions(info).short.kind === "vertical_canvas" ? "/short.mp4" : null, regularPath: planYouTubeVersions(info).regular.kind === "widescreen_canvas" ? "/wide.mp4" : null } });
+  const withBuffer = () => { const c = structuredClone(cfg); c.destinations.youtube.short.bufferChannelId = "chan"; return c; };
+
+  it("horizontal clip: regular video = original via Upload-Post; Short = letterboxed vertical version via Buffer", () => {
+    const yt = withYt(horizontal, withBuffer()).filter((x) => x.platform === "youtube");
+    expect(yt.map((x) => [x.surface, x.provider, x.mediaPath])).toEqual([["short", "buffer", "/short.mp4"], ["video", "upload_post", "/o.mp4"]]);
   });
 
-  it("without Upload-Post configured: unaudited non-Short → PRIVATE official upload; or manual if that is off", () => {
-    const noUp = (c: any) => buildTasks({ cfg: c, info: horizontal, feed: planFeed(horizontal), stories: { plan: planStory(horizontal, "segment"), files: [] }, originalPath: "/o.mp4", captions: caps, providers: { ...fakeProviders, uploadPost: undefined }, identities: allOk });
-    expect(noUp(cfg).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
-    const c = auto();
-    c.destinations.youtube.uploadPrivateWhenUnaudited = false;
-    const m = build(horizontal, c).find((x) => x.platform === "youtube")!;
-    expect(m.blocked!.status).toBe("unsupported");
-    expect(m.blocked!.detail).toMatch(/Buffer only publishes YouTube Shorts/);
+  it("vertical clip: Short = original via Buffer; regular video = pillarboxed widescreen version via Upload-Post", () => {
+    const yt = withYt(vertical, withBuffer()).filter((x) => x.platform === "youtube");
+    expect(yt.map((x) => [x.surface, x.provider, x.mediaPath])).toEqual([["short", "buffer", "/o.mp4"], ["video", "upload_post", "/wide.mp4"]]);
   });
 
-  it("YouTube (provider auto): Shorts-eligible + Buffer YouTube channel → Buffer; audited → official API", () => {
-    const c1 = auto();
-    c1.destinations.youtube.bufferChannelId = "chan";
-    expect(build(vertical, c1).find((x) => x.platform === "youtube")!.provider).toBe("buffer");
-    expect(build(horizontal, c1).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
-    const c2 = auto();
-    c2.destinations.youtube.apiProjectAudited = true;
-    expect(build(horizontal, c2).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
+  it("over 3 min: no Short (reported, nothing cut); regular video still uploaded", () => {
+    const yt = withYt({ ...horizontal, durationSec: 240 }, withBuffer()).filter((x) => x.platform === "youtube");
+    expect(yt[0].blocked!.status).toBe("unsupported");
+    expect(yt[1].provider).toBe("upload_post");
+  });
+
+  it("missing routes are reported, never silently skipped; Upload-Post absent → private official fallback", () => {
+    const yt = withYt(horizontal, cfg, allOk, { ...fakeProviders, uploadPost: undefined }).filter((x) => x.platform === "youtube");
+    expect(yt[0].blocked!.detail).toMatch(/No YouTube channel connected in Buffer/);
+    expect(yt[1].provider).toBe("youtube_data_api");
+    const ids = { ...allOk, youtubeUploadPost: { ok: false, detail: "no YouTube on profile" } };
+    expect(withYt(horizontal, withBuffer(), ids).find((x) => x.surface === "video")!.blocked!.status).toBe("disabled");
   });
 
   it("unverified identity disables the destination", () => {
@@ -371,6 +368,30 @@ describe("ffprobe / ffmpeg", () => {
     expect(Math.max(...raw)).toBeLessThan(30);
     expect(createHash("md5").update(readFileSync(src)).digest("hex")).toBe(before);
     expect(statSync(src).size).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("YouTube Short from a horizontal clip: complete frame inside 1080x1920 with black bars above and below", async () => {
+    const info = await probe(src);
+    const out = join(dir, "short.mp4");
+    await renderCanvas(src, out, info, { width: 1080, height: 1920 });
+    const s = await probe(out);
+    expect([s.width, s.height]).toEqual([1080, 1920]);
+    const top = execFileSync("ffmpeg", ["-v", "error", "-i", out, "-frames:v", "1", "-vf", "crop=1080:200:0:0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]);
+    const mid = execFileSync("ffmpeg", ["-v", "error", "-i", out, "-frames:v", "1", "-vf", "crop=1080:200:0:860", "-f", "rawvideo", "-pix_fmt", "gray", "-"]);
+    expect(top.reduce((m, x) => Math.max(m, x), 0)).toBeLessThan(30);
+    expect(mid.reduce((m, x) => Math.max(m, x), 0)).toBeGreaterThan(100);
+  }, 60_000);
+
+  it("regular-video version of a vertical clip: complete frame inside 1920x1080 with side bars", async () => {
+    const vsrc = join(dir, "v.mp4");
+    execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "testsrc=size=720x1280:rate=24:duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", vsrc]);
+    const info = await probe(vsrc);
+    const out = join(dir, "wide.mp4");
+    await renderWidescreen(vsrc, out, info);
+    const s = await probe(out);
+    expect([s.width, s.height]).toEqual([1920, 1080]);
+    const left = execFileSync("ffmpeg", ["-v", "error", "-i", out, "-frames:v", "1", "-vf", "crop=200:1080:0:0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]);
+    expect(left.reduce((m, x) => Math.max(m, x), 0)).toBeLessThan(30);
   }, 60_000);
 
   it("segment rendition covers the requested time range", async () => {

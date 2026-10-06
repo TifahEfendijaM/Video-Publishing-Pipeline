@@ -31,14 +31,21 @@
       "enabled": true,
       "expectedChannelId": "",
       "expectedChannelHandle": "@EasyBosnian",
-      "provider": "upload_post",
-      "uploadPostProfile": "easybosnian",
-      "uploadPostMonthlyLimit": 10,
-      "apiProjectAudited": false,
-      "uploadPrivateWhenUnaudited": true,
-      "bufferChannelId": "",
       "categoryId": "27",
-      "madeForKids": false
+      "madeForKids": false,
+      "short": {
+        "enabled": true,
+        "provider": "buffer",
+        "bufferChannelId": ""
+      },
+      "regular": {
+        "enabled": true,
+        "provider": "upload_post",
+        "uploadPostProfile": "easybosnian",
+        "uploadPostMonthlyLimit": 10,
+        "fallbackPrivateOfficialApi": true
+      },
+      "apiProjectAudited": false
     }
   },
   "stories": {

@@ -14,14 +14,11 @@ export interface PipelineConfig {
       enabled: boolean;
       expectedChannelId: string;
       expectedChannelHandle: string;
-      provider: "upload_post" | "auto" | "official" | "buffer";
-      uploadPostProfile: string;
-      uploadPostMonthlyLimit: number;
-      apiProjectAudited: boolean;
-      uploadPrivateWhenUnaudited: boolean;
-      bufferChannelId: string;
       categoryId: string;
       madeForKids: boolean;
+      short: { enabled: boolean; provider: "buffer"; bufferChannelId: string };
+      regular: { enabled: boolean; provider: "upload_post"; uploadPostProfile: string; uploadPostMonthlyLimit: number; fallbackPrivateOfficialApi: boolean };
+      apiProjectAudited: boolean;
     };
   };
   stories: { longVideoPolicy: "skip" | "segment" };

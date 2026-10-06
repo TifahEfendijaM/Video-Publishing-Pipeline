@@ -1,7 +1,7 @@
 // Orchestration: build per-destination tasks from the media plan, then run them independently.
 import type { PipelineConfig } from "./config";
 import type { CaptionSet } from "../../src/shared/captions";
-import type { FeedPlan, MediaInfo, StoryPlan } from "../../src/shared/media";
+import type { FeedPlan, MediaInfo, StoryPlan, YouTubeVersions } from "../../src/shared/media";
 import { AmbiguousOutcome, SafeFailure, mayBeLive, type Platform, type PublicationStatus } from "../../src/shared/status";
 import { summarizeError } from "../../src/shared/redact";
 import type { Gate, IdentityCheck, Outcome, Progress } from "./providers/types";
@@ -167,6 +167,7 @@ export function buildTasks(o: {
   captions: CaptionSet;
   providers: Providers;
   identities: Identities;
+  youtube?: { plan: YouTubeVersions; shortPath: string | null; regularPath: string | null };
 }): Task[] {
   const { cfg, feed, stories, originalPath, captions, providers, identities } = o;
   const d = cfg.destinations;
@@ -258,62 +259,61 @@ export function buildTasks(o: {
   }
   // YouTube
   if (d.youtube.enabled) {
-    tasks.push(youtubeTask(o));
+    tasks.push(...youtubeTasks(o));
   }
   return tasks;
 }
 
-function youtubeTask(o: Parameters<typeof buildTasks>[0]): Task {
-  const { cfg, feed, originalPath, captions, providers, identities } = o;
+function youtubeTasks(o: Parameters<typeof buildTasks>[0]): Task[] {
+  const { cfg, originalPath, captions, providers, identities } = o;
   const y = cfg.destinations.youtube;
-  const base = { platform: "youtube" as const, surface: "feed", format: feed.youtube.format, mediaPath: originalPath };
-  if (y.provider === "upload_post" && providers.uploadPost) {
-    // One upload per video. YouTube itself classifies it: vertical/square and <= 3 min => Short, otherwise a regular video.
-    return {
-      ...base,
-      provider: "upload_post",
-      needsUrl: false,
-      blocked: identityBlock(identities.youtubeUploadPost),
-      run: (c) => providers.uploadPost!.upload(originalPath, { title: captions.youtubeTitle, description: captions.youtubeDescription, categoryId: y.categoryId, madeForKids: y.madeForKids }, c.gate, c.progress),
-    };
-  }
-  const audited = y.provider !== "buffer" && y.apiProjectAudited;
-  const viaBuffer = !audited && (y.provider === "auto" || y.provider === "buffer") && feed.youtube.format === "short" && !!y.bufferChannelId;
-  const privateUpload = !audited && !viaBuffer && y.provider !== "buffer" && y.uploadPrivateWhenUnaudited;
+  const yp = o.youtube ?? { plan: undefined as unknown as YouTubeVersions, shortPath: null, regularPath: null };
+  const tasks: Task[] = [];
+  const meta = { title: captions.youtubeTitle, description: captions.youtubeDescription, categoryId: y.categoryId, madeForKids: y.madeForKids };
 
-  if (audited || privateUpload) {
-    // Audited project: public upload. Otherwise: deliberately PRIVATE, reported as a manual publishing step.
-    const privacy: "public" | "private" = audited ? "public" : "private";
-    return {
-      ...base,
-      provider: "youtube_data_api",
-      needsUrl: false,
-      blocked: identityBlock(identities.youtube) ?? (!providers.youtube ? { status: "disabled", detail: "YouTube OAuth credentials not configured" } : undefined),
-      run: (c) =>
-        providers.youtube!.upload(originalPath, { title: captions.youtubeTitle, description: captions.youtubeDescription, categoryId: y.categoryId, madeForKids: y.madeForKids, privacyStatus: privacy }, c.gate, c.progress),
-    };
+  // Short — Buffer (public, Shorts only)
+  if (y.short.enabled) {
+    const base = { platform: "youtube" as const, surface: "short", format: "short" };
+    if (!yp.plan || yp.plan.short.kind === "impossible") {
+      tasks.push({ ...base, provider: "none", needsUrl: false, blocked: { status: "unsupported", detail: yp.plan?.short.reason ?? "YouTube version plan missing" } });
+    } else if (y.short.bufferChannelId) {
+      const path = yp.shortPath ?? originalPath;
+      tasks.push({
+        ...base,
+        provider: "buffer",
+        mediaPath: path,
+        needsUrl: true,
+        blocked: identityBlock(identities.youtubeBuffer) ?? (!providers.buffer ? { status: "disabled", detail: "BUFFER_API_KEY not configured" } : undefined),
+        run: (c) => providers.buffer!.publish({ channelId: y.short.bufferChannelId, text: captions.youtubeDescription, videoUrl: c.url!, youtube: meta }, c.gate, c.progress),
+      });
+    } else {
+      tasks.push({ ...base, provider: "none", needsUrl: false, blocked: { status: "unsupported", detail: "No YouTube channel connected in Buffer (youtube.short.bufferChannelId empty). Manual step: connect @EasyBosnian in Buffer, or upload the Short in YouTube Studio." } });
+    }
   }
-  if (viaBuffer) {
-    return {
-      ...base,
-      provider: "buffer",
-      needsUrl: true,
-      blocked: identityBlock(identities.youtubeBuffer) ?? (!providers.buffer ? { status: "disabled", detail: "BUFFER_API_KEY not configured" } : undefined),
-      run: (c) =>
-        providers.buffer!.publish(
-          { channelId: y.bufferChannelId, text: captions.youtubeDescription, videoUrl: c.url!, youtube: { title: captions.youtubeTitle, categoryId: y.categoryId, madeForKids: y.madeForKids } },
-          c.gate,
-          c.progress,
-        ),
-    };
+
+  // Regular video — Upload-Post (public); fallback: official API (public if audited, else private = manual step)
+  if (y.regular.enabled) {
+    const base = { platform: "youtube" as const, surface: "video", format: "video" };
+    const path = yp.regularPath ?? originalPath;
+    if (!yp.plan) {
+      tasks.push({ ...base, provider: "none", needsUrl: false, blocked: { status: "unsupported", detail: "YouTube version plan missing" } });
+    } else if (providers.uploadPost) {
+      tasks.push({ ...base, provider: "upload_post", mediaPath: path, needsUrl: false, blocked: identityBlock(identities.youtubeUploadPost), run: (c) => providers.uploadPost!.upload(path, meta, c.gate, c.progress) });
+    } else if (y.apiProjectAudited || y.regular.fallbackPrivateOfficialApi) {
+      const privacy: "public" | "private" = y.apiProjectAudited ? "public" : "private";
+      tasks.push({
+        ...base,
+        provider: "youtube_data_api",
+        mediaPath: path,
+        needsUrl: false,
+        blocked: identityBlock(identities.youtube) ?? (!providers.youtube ? { status: "disabled", detail: "Neither UPLOAD_POST_API_KEY nor YouTube OAuth credentials are configured" } : undefined),
+        run: (c) => providers.youtube!.upload(path, { ...meta, privacyStatus: privacy }, c.gate, c.progress),
+      });
+    } else {
+      tasks.push({ ...base, provider: "none", needsUrl: false, blocked: { status: "unsupported", detail: "UPLOAD_POST_API_KEY not configured and the private fallback is off. Manual step: upload the regular video in YouTube Studio." } });
+    }
   }
-  const why =
-    feed.youtube.format === "short"
-      ? y.bufferChannelId
-        ? "YouTube provider configuration excludes both routes"
-        : "Shorts-eligible, but no YouTube channel is connected in Buffer (youtube.bufferChannelId empty) and the official API project is not audited for public uploads"
-      : `${feed.youtube.reason}. Buffer only publishes YouTube Shorts, and the official YouTube API project is not audited (unaudited uploads are locked private)`;
-  return { ...base, provider: "none", needsUrl: false, blocked: { status: "unsupported", detail: `${why}. Manual step: upload to YouTube Studio, or complete the YouTube API audit and set apiProjectAudited=true.` } };
+  return tasks;
 }
 
 function identityBlock(id: IdentityCheck) {
