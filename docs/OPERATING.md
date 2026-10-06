@@ -34,7 +34,7 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 | Action | What it does | Publishes? |
 |---|---|---|
 | `status` | Saved settings, next occurrences, recent runs, scheduler dispatches (with GitHub HTTP status), open publications | no |
-| `verify` | Checks every account identity, permission, folder, Buffer schema, R2 privacy, Worker target | no |
+| `verify` | Checks every account identity, permission, folder, Buffer schema, temporary-hosting privacy, free caption model, Worker target | no |
 | `preview` | Read-only selection + media/format plan + captions + Story renders (artifact). `target` = optional filename | no |
 | `dispatch_test` | Worker dispatches the scheduled workflow in non-publishing verification mode | no |
 | `publishing_enable` / `publishing_disable` | Global kill switch (checked right before every publication) | — |
@@ -61,13 +61,28 @@ Ordering uses the time a file was uploaded or moved into the folder, from the **
 no activity record exists, and is labelled "created time approximation" in summaries. Ties are broken by
 Drive file ID.
 
+## YouTube
+
+Vertical videos up to 3 minutes are Shorts and go out publicly via Buffer. Any other video is uploaded
+**private** via the official API (the project is not audited) and shown as "🚫 Unsupported / manual" with
+its link, so you can make it public in YouTube Studio.
+
+## What "same video" means (Drive file ID)
+
+Every file in Google Drive has a permanent ID (the long code in its link, e.g.
+`…/file/d/1p6_I1DeHCe2fKSSdDo3F69aqDiwUrmak/view`). Renaming a file, or uploading a new version via
+"Manage versions", keeps the ID; uploading a separate copy creates a new ID. The pipeline tracks videos by
+this ID, so a renamed or replaced-in-place file counts as the **same** video and is not republished
+automatically; a newly uploaded file counts as new. Use `custom` to republish deliberately.
+
 ## Captions
 
 - Filenames made of IDs, numbers, dates or generic camera/export/AI-tool labels (e.g.
   `gemini_generated_video_0A28F2A0.mp4`, `178904548924381.mp4`, `Made with Veo 3.mp4`) get the reviewed
   generic caption in `config/generic-caption.json` — no topic is invented.
-- Meaningful filenames (e.g. `kako_naruciti_kafu.mp4`) get a topic caption written by Claude from the
-  filename hint only (treated as data), validated for Bosnian diacritics, banned content (CEFR levels,
+- Meaningful filenames (e.g. `kako_naruciti_kafu.mp4`) get a topic caption written by a free Cloudflare
+  Workers AI model (Llama 3.3 70B) from the filename hint only (treated as data). Free models write Bosnian
+  less reliably than paid ones, so the output is also rejected if it lacks diacritics, uses Cyrillic or English, and it is validated for Bosnian diacritics, banned content (CEFR levels,
   "mala ispravka", references to earlier/deleted posts or internal tooling, foreign links) and each
   platform's limits, and always ending with `👉easybosnian.com`. Any failure → generic caption, reported.
   Text is never truncated.
@@ -76,6 +91,7 @@ Drive file ID.
 
 - Instagram and Facebook Stories use the original file when it is already 9:16 H.264; otherwise the
   complete frame is letterboxed onto a 1080×1920 black canvas (no crop, no stretch).
-- Over 60 s: no Story is posted (reported, nothing discarded) unless you approve chronological
-  segmentation by setting `stories.longVideoPolicy` to `"segment"` in `config/pipeline.json`.
+- Over 60 s (not expected): split chronologically into equal consecutive Stories of ≤ 60 s that cover
+  the whole video (`stories.longVideoPolicy = "segment"`, as you approved). Each part is reported separately
+  (`story_part_1`, `story_part_2`, …).
 - TikTok Stories: unsupported (no API) — reported as manual.

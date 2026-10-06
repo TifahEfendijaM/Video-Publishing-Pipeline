@@ -15,12 +15,18 @@ GITHUB_OWNER = "TifahEfendijaM"
 GITHUB_REPO = "Video-Publishing-Pipeline"
 GITHUB_WORKFLOW = "scheduled-publish.yml"
 GITHUB_REF = "main"
+MEDIA_TTL_SECONDS = "21600"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "easybosnian-video-pipeline"
 database_id = "__D1_DATABASE_ID__"
 migrations_dir = "migrations"
+
+# Temporary video hosting (free plan; requests over the free limits fail rather than being billed)
+[[kv_namespaces]]
+binding = "MEDIA"
+id = "__KV_NAMESPACE_ID__"
 
 [observability]
 enabled = true

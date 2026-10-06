@@ -22,6 +22,8 @@ export interface Db {
 
 export interface Env {
   DB: Db;
+  MEDIA?: import("./media").MediaKV;
+  MEDIA_TTL_SECONDS?: string;
   STATE_API_TOKEN: string;
   GH_DISPATCH_TOKEN: string;
   GITHUB_OWNER: string;

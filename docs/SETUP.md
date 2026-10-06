@@ -4,7 +4,7 @@ Everything runs in the cloud: a Cloudflare Worker (timing + dispatch + small sta
 Actions runners (download, ffprobe/ffmpeg, captions, uploads). Nothing depends on your computer or on Claude.
 
 **This project shares nothing with the image-card pipeline**: its own repository, Worker
-(`easybosnian-video-scheduler`), D1 database (`easybosnian-video-pipeline`), R2 bucket and secrets.
+(`easybosnian-video-scheduler`), D1 database (`easybosnian-video-pipeline`), KV namespace and secrets.
 Do not reuse that project's tokens; create new ones below.
 
 ## 1. Accounts, scopes and approvals
@@ -12,12 +12,12 @@ Do not reuse that project's tokens; create new ones below.
 | # | What | Where | Exact settings | Status |
 |---|---|---|---|---|
 | 1 | **Google service account** (Drive read) | Google Cloud console → new project "easybosnian-video" → IAM → Service accounts → create → Keys → JSON | Enable **Google Drive API** and **Drive Activity API**. Share the Drive folder *EasyBosnian educational videos* with the service-account email as **Viewer** (nothing else is shared; the folder stays private). | ⏳ you |
-| 2 | **YouTube OAuth client** | Same project → APIs: enable **YouTube Data API v3** → OAuth consent screen (External) → **Publish app → In production** → Credentials → OAuth client (Desktop app) | Scopes `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly`. Sign in **as the EasyBosnian channel owner**. Unverified-app warning is expected for your own use. | ⏳ you (then I help generate the refresh token) |
+| 2 | **YouTube OAuth client** (used for verification and for PRIVATE uploads of non-Shorts) | Same project → APIs: enable **YouTube Data API v3** → OAuth consent screen (External) → **Publish app → In production** → Credentials → OAuth client (Web application, see below) | Scopes `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly`. Sign in **as the EasyBosnian channel owner**. Unverified-app warning is expected for your own use. | ⏳ you (then I help generate the refresh token) |
 | 3 | **YouTube API compliance audit** | [YouTube API Services audit form](https://support.google.com/youtube/contact/yt_api_form) | Required for **public** uploads via the official API. Until approved, `apiProjectAudited` stays `false`. | ⏳ optional / weeks |
 | 4 | **Meta app + system user** | developers.facebook.com → Create app (Business) linked to your Business portfolio; business.facebook.com → Users → **System users** → add (Admin) → assign the Easy Bosnian **Page** (full control) and the **@easy_bosnian** Instagram account → Generate token (never expires) | Permissions: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`, `business_management`. Then exchange for the **Page** token: `GET /{page-id}?fields=access_token` with the system-user token. | ⏳ you |
-| 5 | **Buffer API key** | publish.buffer.com/settings/api | Personal API key of the Buffer account where @easy.bosnian TikTok is connected. Optional: connect the YouTube channel in Buffer for Shorts. | ⏳ you |
-| 6 | **Anthropic API key** (captions) | console.anthropic.com → API keys (separate pay-as-you-go billing; a Claude.ai subscription does not provide API access) | Used only for meaningful filenames. | ⏳ optional |
-| 7 | **Cloudflare** | dash.cloudflare.com → My Profile → API Tokens → Create custom token | Account permissions: **Workers Scripts: Edit**, **D1: Edit**, **Workers R2 Storage: Edit**; Account Resources: your account only. Enable R2 in the dashboard once (may ask for a payment method; usage stays inside the free tier). R2 → Manage API tokens → **Object Read & Write**, bucket `easybosnian-video-tmp` only → S3 access key ID/secret. | ⏳ you |
+| 5 | **Buffer API key + YouTube channel in Buffer** | publish.buffer.com/settings/api; Buffer → Channels → connect YouTube (@EasyBosnian) | Personal API key of the Buffer account where @easy.bosnian TikTok is connected. **Connect @EasyBosnian YouTube in Buffer** — your vertical clips are Shorts, and Buffer publishes Shorts publicly without Google's audit. (Buffer's free plan allows 3 connected channels.) | ⏳ you |
+| 6 | **Cloudflare Workers AI token** (free captions) | dash.cloudflare.com → API Tokens → Create custom token | Account permission **Workers AI: Read** only. Keep the account on the **Workers Free plan**: the free allowance is 10,000 Neurons/day (one caption ≈ 100) and usage above it is refused, never billed. | ⏳ you |
+| 7 | **Cloudflare deploy token** | dash.cloudflare.com → My Profile → API Tokens → Create custom token | Account permissions: **Workers Scripts: Edit**, **D1: Edit**, **Workers KV Storage: Edit**; Account Resources: your account only. No payment method needed: temporary video hosting uses the free Workers KV (≤24 MB per video). R2 is optional and only for videos over 24 MB (R2 requires a card on file, so it is left off). | ⏳ you |
 | 8 | **GitHub dispatch token** for the Worker | github.com/settings/personal-access-tokens → Fine-grained | Resource owner TifahEfendijaM; **Only select repositories: Video-Publishing-Pipeline**; Repository permissions: **Actions: Read and write** (Metadata: read is automatic). Nothing else. Expiry: up to 1 year (calendar a renewal). | ⏳ you |
 
 ### Getting the YouTube refresh token (browser only, no local install)
@@ -44,26 +44,26 @@ Settings → Secrets and variables → Actions.
 | `META_PAGE_ACCESS_TOKEN` | Page token from step 4 |
 | `META_APP_ID`, `META_APP_SECRET` | step 4 app (only used to inspect token scopes in `verify`) |
 | `BUFFER_API_KEY` | step 5 |
-| `ANTHROPIC_API_KEY` | step 6 (optional) |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | step 7 R2 S3 credentials |
+| `CLOUDFLARE_AI_TOKEN` | step 6 (Workers AI: Read) |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | optional, only for videos over 24 MB |
 
 **Variables**
 
 | Name | Value |
 |---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | your Cloudflare account ID |
-| `R2_BUCKET` | `easybosnian-video-tmp` |
+| `R2_BUCKET` | optional; leave unset |
 | `STATE_API_URL` | Worker URL printed by the deploy run, e.g. `https://easybosnian-video-scheduler.<subdomain>.workers.dev` |
 
 Fill in `config/pipeline.json` (via a commit): `instagram.expectedUserId`, `facebook.expectedPageId`,
-`tiktok.expectedBufferChannelId`, `youtube.expectedChannelId` (and optionally `youtube.bufferChannelId`).
+`tiktok.expectedBufferChannelId`, `youtube.bufferChannelId`, and `youtube.expectedChannelId` (the handle `@EasyBosnian` is already configured; `verify` prints the matching channel ID).
 `verify` prints the IDs it finds so you can copy them; an empty expected ID keeps that destination *Disabled*.
 
 ## 3. Deploy the Worker
 
 Actions → **Deploy scheduler Worker** → Run workflow → type `deploy`. It runs the tests, creates/updates
 the D1 database, applies migrations, deploys, sets `GH_DISPATCH_TOKEN` + `STATE_API_TOKEN` as Worker
-secrets, ensures the R2 bucket with a 1-day expiry rule, and **reads back the live cron triggers,
+secrets, creates the free KV namespace for temporary videos, and **reads back the live cron triggers,
 deployments, secret names and `/api/target`** into the run summary.
 
 Equivalent local commands (with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` exported):
@@ -71,13 +71,12 @@ Equivalent local commands (with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_I
 ```bash
 npm ci && npm test
 npx wrangler d1 create easybosnian-video-pipeline            # once; copy the id
-sed "s/__D1_DATABASE_ID__/<id>/" worker/wrangler.toml > worker/wrangler.generated.toml
+sed -e "s/__D1_DATABASE_ID__/<d1-id>/" -e "s/__KV_NAMESPACE_ID__/<kv-id>/" worker/wrangler.toml > worker/wrangler.generated.toml
 npx wrangler d1 migrations apply easybosnian-video-pipeline --remote --config worker/wrangler.generated.toml
 npx wrangler deploy --config worker/wrangler.generated.toml
 echo -n "$GH_DISPATCH_TOKEN" | npx wrangler secret put GH_DISPATCH_TOKEN --config worker/wrangler.generated.toml
 echo -n "$STATE_API_TOKEN"   | npx wrangler secret put STATE_API_TOKEN   --config worker/wrangler.generated.toml
-npx wrangler r2 bucket create easybosnian-video-tmp
-npx wrangler r2 bucket lifecycle add easybosnian-video-tmp expire-tmp tmp/ --expire-days 1 -y
+npx wrangler kv namespace create easybosnian-video-media   # put its id into the generated toml (__KV_NAMESPACE_ID__)
 # read back
 curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/easybosnian-video-scheduler/schedules
@@ -90,7 +89,7 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 
 ## 4. First checks (none of these publish)
 
-1. Tools → `verify` — identities, scopes, Drive folder, Activity API, Buffer schema, R2 privacy.
+1. Tools → `verify` — identities, scopes, Drive folder, Activity API, Buffer schema, temporary-hosting privacy, free caption model.
 2. Tools → `dispatch_test` — Worker → GitHub dispatch round trip; a "Scheduled publish (Worker)" run
    appears and exits with "Dispatch verified".
 3. Tools → `preview` — selects (read-only), downloads, probes, plans formats, writes captions, renders
@@ -102,8 +101,8 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 | Service | Expected cost |
 |---|---|
 | Cloudflare Workers (1,440 cron wake-ups/day), D1 | free plan |
-| Cloudflare R2 (a few MB for < 1 day per video) | free tier (10 GB-month, no egress fees); enabling R2 may require a card on file |
+| Cloudflare Workers KV (temporary videos, deleted after use, 6 h expiry) | free plan; over-limit writes fail rather than bill |
 | GitHub Actions (private repo) | ~3–8 min per publish run; free plan includes 2,000 min/month |
-| Claude API captions | $0 for generic filenames (all current files). Meaningful filenames: about $0.01–0.03 per video (Claude Opus 5.5, low effort) |
+| Captions (Cloudflare Workers AI, `@cf/meta/llama-3.3-70b-instruct-fp8-fast`) | $0: about 100 of the 10,000 free daily Neurons per topic caption; generic filenames use no model at all. On the Workers Free plan nothing can be billed. |
 | Buffer | your existing plan; the API is included on all plans (free: 3,000 requests/30 days; we poll once per minute, ≤20 per post) |
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |

@@ -283,3 +283,55 @@ describe("HTTP API", () => {
     expect(bad.status ?? 400).toBe(400);
   });
 });
+
+describe("temporary media hosting (Workers KV)", () => {
+  function kvEnv() {
+    const store = new Map<string, { value: ArrayBuffer; metadata: unknown; ttl?: number }>();
+    const MEDIA = {
+      async put(k: string, v: ArrayBuffer, o?: { expirationTtl?: number; metadata?: unknown }) {
+        store.set(k, { value: v, metadata: o?.metadata ?? null, ttl: o?.expirationTtl });
+      },
+      async getWithMetadata(k: string) {
+        const e = store.get(k);
+        return { value: e?.value ?? null, metadata: (e?.metadata as any) ?? null };
+      },
+      async delete(k: string) {
+        store.delete(k);
+      },
+    };
+    return { e: { ...env(), MEDIA, MEDIA_TTL_SECONDS: "21600" }, store };
+  }
+  const auth = { authorization: "Bearer state-secret-123456" };
+  const bytes = new Uint8Array(Array.from({ length: 1000 }, (_, i) => i % 256));
+
+  it("requires auth to upload, serves by unguessable key, supports ranges, expires and deletes", async () => {
+    const { e, store } = kvEnv();
+    const unauth = await route(new Request("https://w/api/media", { method: "POST", body: bytes, headers: { "content-length": "1000" } }), e);
+    expect(unauth.status).toBe(401);
+    const up = await route(new Request("https://w/api/media", { method: "POST", body: bytes, headers: { ...auth, "content-type": "video/mp4", "content-length": "1000" } }), e);
+    const { key, url } = (await up.json()) as any;
+    expect(url).toBe(`https://w/media/${key}.mp4`);
+    expect(key).toMatch(/^[a-f0-9]{64}$/);
+    expect(store.get(key)!.ttl).toBe(21600);
+    const full = await route(new Request(url), e);
+    expect(full.status).toBe(200);
+    expect(full.headers.get("content-type")).toBe("video/mp4");
+    expect(new Uint8Array(await full.arrayBuffer())).toEqual(bytes);
+    const part = await route(new Request(url, { headers: { range: "bytes=10-19" } }), e);
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe("bytes 10-19/1000");
+    expect([...new Uint8Array(await part.arrayBuffer())]).toEqual([...bytes.slice(10, 20)]);
+    const tail = await route(new Request(url, { headers: { range: "bytes=-5" } }), e);
+    expect(tail.headers.get("content-range")).toBe("bytes 995-999/1000");
+    expect((await route(new Request(url.replace(key, "0".repeat(64))), e)).status).toBe(404);
+    expect((await route(new Request("https://w/media/../api/state"), e)).status).not.toBe(200);
+    await route(new Request(`https://w/api/media/${key}`, { method: "DELETE", headers: auth }), e);
+    expect((await route(new Request(url), e)).status).toBe(404);
+  });
+
+  it("refuses files over the free 25 MiB KV value limit", async () => {
+    const { e } = kvEnv();
+    const r = await route(new Request("https://w/api/media", { method: "POST", body: "x", headers: { ...auth, "content-length": String(30 * 1024 * 1024) } }), e);
+    expect(r.status).toBe(413);
+  });
+});

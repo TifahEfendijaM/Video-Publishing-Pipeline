@@ -119,7 +119,7 @@ describe("buildTasks routing", () => {
   const fakeProviders = { meta: {} as any, buffer: {} as any, youtube: {} as any };
   const caps = { caption: "x", youtubeTitle: "t", youtubeDescription: "d" };
   const build = (info: any, c = cfg, ids = allOk) =>
-    buildTasks({ cfg: c, info, feed: planFeed(info), stories: { plan: planStory(info, "skip"), files: [] }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: ids });
+    buildTasks({ cfg: c, info, feed: planFeed(info), stories: { plan: planStory(info, c.stories.longVideoPolicy), files: [] }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: ids });
 
   it("TikTok Story is always marked unsupported/manual, feed is via Buffer", () => {
     const t = build(vertical);
@@ -127,16 +127,22 @@ describe("buildTasks routing", () => {
     expect(t.find((x) => x.platform === "tiktok" && x.surface === "feed")!.provider).toBe("buffer");
   });
 
-  it("YouTube: unaudited + horizontal source → unsupported/manual, never silently cropped", () => {
+  it("YouTube unaudited + not a Short → uploaded PRIVATE for manual publishing (never cropped); or manual if private upload is off", () => {
     const y = build(horizontal).find((x) => x.platform === "youtube")!;
-    expect(y.blocked!.status).toBe("unsupported");
-    expect(y.blocked!.detail).toMatch(/Buffer only publishes YouTube Shorts/);
+    expect(y.provider).toBe("youtube_data_api");
+    expect(y.format).toBe("video");
+    const c = structuredClone(cfg);
+    c.destinations.youtube.uploadPrivateWhenUnaudited = false;
+    const m = build(horizontal, c).find((x) => x.platform === "youtube")!;
+    expect(m.blocked!.status).toBe("unsupported");
+    expect(m.blocked!.detail).toMatch(/Buffer only publishes YouTube Shorts/);
   });
 
-  it("YouTube: Shorts-eligible + Buffer YouTube channel → Buffer; audited → official API", () => {
+  it("YouTube: Shorts-eligible + Buffer YouTube channel → Buffer (public); audited → official API", () => {
     const c1 = structuredClone(cfg);
     c1.destinations.youtube.bufferChannelId = "chan";
     expect(build(vertical, c1).find((x) => x.platform === "youtube")!.provider).toBe("buffer");
+    expect(build(horizontal, c1).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
     const c2 = structuredClone(cfg);
     c2.destinations.youtube.apiProjectAudited = true;
     expect(build(horizontal, c2).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
@@ -155,10 +161,22 @@ describe("buildTasks routing", () => {
     expect(s.map((x) => x.platform)).toEqual(["instagram", "facebook"]);
   });
 
-  it("long video without segmentation agreement: Stories unsupported, feed still attempted", () => {
-    const t = build({ ...vertical, durationSec: 95 });
+  it("long video: segmentation is now enabled by config; without it, Stories are reported and feed still attempted", () => {
+    expect(cfg.stories.longVideoPolicy).toBe("segment");
+    const c = structuredClone(cfg);
+    c.stories.longVideoPolicy = "skip";
+    const t = build({ ...vertical, durationSec: 95 }, c);
     expect(t.filter((x) => x.format === "story" && x.platform !== "tiktok").every((x) => x.blocked?.status === "unsupported")).toBe(true);
     expect(t.find((x) => x.platform === "instagram" && x.surface === "feed")!.blocked).toBeUndefined();
+  });
+
+  it("segmented Stories get separately identifiable surfaces per platform", () => {
+    const info = { ...vertical, durationSec: 95 };
+    const plan = planStory(info, "segment");
+    const files = plan.kind === "segmented" ? plan.segments.map((sg) => ({ path: `/s${sg.index}.mp4`, surface: `story_part_${sg.index}`, label: "" })) : [];
+    const t = buildTasks({ cfg, info, feed: planFeed(info), stories: { plan, files }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: allOk });
+    expect(t.filter((x) => x.platform === "instagram" && x.format === "story").map((x) => x.surface)).toEqual(["story_part_1", "story_part_2"]);
+    expect(t.filter((x) => x.platform === "facebook" && x.format === "story").map((x) => x.surface)).toEqual(["story_part_1", "story_part_2"]);
   });
 });
 
@@ -199,19 +217,57 @@ describe("secret redaction", () => {
   });
 });
 
-describe("captions without a model", () => {
+describe("captions (free Cloudflare Workers AI model, injectable for tests)", () => {
+  const good = {
+    topic_caption: "Naručiti kafu u Sarajevu je pravi mali ritual. ☕",
+    website_invitation: "Uz EasyBosnian ćeš i za šankom zvučati kao domaći!",
+    youtube_title: "Kako naručiti kafu na bosanskom",
+    youtube_description: "Kratko o tome kako se naručuje kafa. Uči bosanski uz EasyBosnian.",
+  };
+
   it("meaningless filenames use the stored generic caption with no model call", async () => {
-    const r = await makeCaptions("gemini_generated_video_0A28F2A0.mp4", { apiKey: "unused", model: "claude-opus-5-5", effort: "low" });
+    let called = false;
+    const r = await makeCaptions("gemini_generated_video_0A28F2A0.mp4", { model: "m", run: async () => ((called = true), good) });
     expect(r.source).toBe("generic");
+    expect(called).toBe(false);
     expect(r.caption.endsWith("👉easybosnian.com")).toBe(true);
     expect(r.caption).toContain("Želiš");
   });
 
-  it("meaningful filename without a configured key falls back to generic and says so", async () => {
-    const r = await makeCaptions("kako_naruciti_kafu.mp4", { apiKey: undefined, model: "claude-opus-5-5", effort: "low" });
+  it("meaningful filename without a configured model falls back to generic and says so", async () => {
+    const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m" });
     expect(r.analysis.meaningful).toBe(true);
     expect(r.source).toBe("generic");
-    expect(r.notes.join()).toMatch(/ANTHROPIC_API_KEY/);
+    expect(r.notes.join()).toMatch(/Workers AI/);
+  });
+
+  it("valid model output becomes a topic caption ending with the exact website line", async () => {
+    let prompt = "";
+    const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m", run: async (_s, u) => ((prompt = u), good) });
+    expect(r.source).toBe("generated");
+    expect(r.caption).toBe(`${good.topic_caption}\n${good.website_invitation}\n👉easybosnian.com`);
+    expect(r.caption).toMatch(/[čćšž]/);
+    expect(prompt).toContain('"kako naruciti kafu"'); // filename passed as quoted data
+  });
+
+  it("rejects bad output (no diacritics, CEFR, English, Cyrillic, foreign link) and retries once, then falls back", async () => {
+    const bad = [
+      { ...good, topic_caption: "Nauci kako naruciti kafu.", website_invitation: "Uci bosanski uz EasyBosnian.", youtube_description: "Kafa. Uci bosanski." },
+      { ...good, topic_caption: "Lekcija za nivo A2: learn with us at evil.com" },
+    ];
+    let n = 0;
+    const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m", run: async () => bad[n++] });
+    expect(n).toBe(2);
+    expect(r.source).toBe("generic");
+    expect(r.notes.join(" ")).toMatch(/diacritics/);
+    expect(r.notes.join(" ")).toMatch(/CEFR/);
+    expect(r.notes.join(" ")).toMatch(/safe fallback/);
+  });
+
+  it("model errors (e.g. free allowance used up) fall back without failing the run", async () => {
+    const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m", run: async () => { throw new Error("HTTP 429 daily free allocation exceeded"); } });
+    expect(r.source).toBe("generic");
+    expect(r.notes.join()).toMatch(/nothing is charged/);
   });
 });
 

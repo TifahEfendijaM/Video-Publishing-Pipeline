@@ -15,17 +15,23 @@ export class YouTube {
     return { authorization: `Bearer ${this.accessToken}`, ...extra };
   }
 
-  async verify(expectedChannelId: string, scopes: string[]): Promise<IdentityCheck> {
-    if (!expectedChannelId) return { ok: false, detail: "expectedChannelId is not configured (YouTube channel link/ID still needed)" };
+  async verify(expectedChannelId: string, expectedHandle: string, scopes: string[]): Promise<IdentityCheck> {
+    if (!expectedChannelId && !expectedHandle) return { ok: false, detail: "neither expectedChannelId nor expectedChannelHandle is configured" };
     try {
       const r = await json<any>("https://www.googleapis.com/youtube/v3/channels?part=id,snippet,status&mine=true", { label: "youtube channels", headers: this.h() });
       const ch = (r.items ?? []) as any[];
-      const c = ch.find((x) => x.id === expectedChannelId);
-      if (!c) return { ok: false, detail: `authorized account owns ${ch.map((x) => `${x.snippet?.title} (${x.id})`).join(", ") || "no channel"}, not ${expectedChannelId}` };
+      const handle = expectedHandle.toLowerCase().replace(/^@?/, "@");
+      const c = ch.find((x) => (expectedChannelId ? x.id === expectedChannelId : String(x.snippet?.customUrl ?? "").toLowerCase() === handle));
+      if (!c) {
+        return { ok: false, detail: `authorized account owns ${ch.map((x) => `${x.snippet?.title} ${x.snippet?.customUrl ?? ""} (${x.id})`).join(", ") || "no channel"}, not ${expectedChannelId || expectedHandle}` };
+      }
+      if (expectedChannelId && expectedHandle && String(c.snippet?.customUrl ?? "").toLowerCase() !== handle) {
+        return { ok: false, detail: `channel ${c.id} has handle ${c.snippet?.customUrl}, expected ${expectedHandle}` };
+      }
       const hasUpload = scopes.some((s) => /youtube\.upload|auth\/youtube$/.test(s));
       return {
         ok: hasUpload,
-        detail: `YouTube channel "${c.snippet?.title}" (${c.id})${c.snippet?.customUrl ? ` ${c.snippet.customUrl}` : ""}; long uploads ${c.status?.longUploadsStatus ?? "?"}; upload scope ${hasUpload ? "granted" : "MISSING"}`,
+        detail: `YouTube channel "${c.snippet?.title}" ${c.snippet?.customUrl ?? ""} — channel ID ${c.id}${expectedChannelId ? "" : " (copy into expectedChannelId to pin it)"}; long uploads ${c.status?.longUploadsStatus ?? "?"}; upload scope ${hasUpload ? "granted" : "MISSING"}`,
       };
     } catch (e) {
       return { ok: false, detail: `YouTube check failed: ${summarizeError(e, 200)}` };

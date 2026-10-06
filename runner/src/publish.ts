@@ -264,11 +264,13 @@ function youtubeTask(o: Parameters<typeof buildTasks>[0]): Task {
   const { cfg, feed, originalPath, captions, providers, identities } = o;
   const y = cfg.destinations.youtube;
   const base = { platform: "youtube" as const, surface: "feed", format: feed.youtube.format, mediaPath: originalPath };
-  const official = y.provider === "official" || (y.provider === "auto" && y.apiProjectAudited);
-  const viaBuffer = !official && (y.provider === "buffer" || y.provider === "auto") && feed.youtube.format === "short" && !!y.bufferChannelId;
+  const audited = y.provider !== "buffer" && y.apiProjectAudited;
+  const viaBuffer = !audited && y.provider !== "official" && feed.youtube.format === "short" && !!y.bufferChannelId;
+  const privateUpload = !audited && !viaBuffer && y.provider !== "buffer" && y.uploadPrivateWhenUnaudited;
 
-  if (official || (y.provider !== "buffer" && y.uploadPrivateWhenUnaudited)) {
-    const privacy: "public" | "private" = y.apiProjectAudited ? "public" : "private";
+  if (audited || privateUpload) {
+    // Audited project: public upload. Otherwise: deliberately PRIVATE, reported as a manual publishing step.
+    const privacy: "public" | "private" = audited ? "public" : "private";
     return {
       ...base,
       provider: "youtube_data_api",

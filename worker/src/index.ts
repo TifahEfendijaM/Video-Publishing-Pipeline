@@ -22,6 +22,7 @@ import {
   upsertPublication,
   type Env,
 } from "./logic";
+import { deleteMedia, putMedia, serveMedia } from "./media";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -41,6 +42,11 @@ export async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const now = Date.now();
   if (url.pathname === "/health") return json({ ok: true, service: "easybosnian-video-scheduler" });
+  const media = /^\/media\/([a-f0-9]{64})\.mp4$/.exec(url.pathname);
+  if (media && (req.method === "GET" || req.method === "HEAD")) {
+    if (!env.MEDIA) return json({ error: "media hosting not configured" }, 404);
+    return serveMedia(env.MEDIA, req, media[1]);
+  }
 
   const auth = req.headers.get("authorization") ?? "";
   if (!env.STATE_API_TOKEN || !timingSafeEqual(auth, `Bearer ${env.STATE_API_TOKEN}`)) return json({ error: "unauthorized" }, 401);
@@ -64,6 +70,12 @@ export async function route(req: Request, env: Env): Promise<Response> {
   if (m === "GET" && p === "/api/target") {
     return json({ owner: env.GITHUB_OWNER, repo: env.GITHUB_REPO, workflow: env.GITHUB_WORKFLOW, ref: env.GITHUB_REF });
   }
+  if (p === "/api/media" && m === "POST") {
+    if (!env.MEDIA) return json({ error: "media hosting (KV binding MEDIA) not configured" }, 501);
+    return putMedia(env.MEDIA, req, url.origin, Number(env.MEDIA_TTL_SECONDS ?? "21600"));
+  }
+  const del = /^\/api\/media\/([a-f0-9]{64})$/.exec(p);
+  if (del && m === "DELETE" && env.MEDIA) return deleteMedia(env.MEDIA, del[1]);
   if (m !== "POST") return json({ error: "not found" }, 404);
 
   const b = await body(req);

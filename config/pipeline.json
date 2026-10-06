@@ -30,20 +30,21 @@
     "youtube": {
       "enabled": true,
       "expectedChannelId": "",
+      "expectedChannelHandle": "@EasyBosnian",
       "provider": "auto",
       "apiProjectAudited": false,
-      "uploadPrivateWhenUnaudited": false,
+      "uploadPrivateWhenUnaudited": true,
       "bufferChannelId": "",
       "categoryId": "27",
       "madeForKids": false
     }
   },
   "stories": {
-    "longVideoPolicy": "skip"
+    "longVideoPolicy": "segment"
   },
   "captions": {
-    "model": "claude-opus-5-5",
-    "effort": "low"
+    "provider": "cloudflare_workers_ai",
+    "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   },
   "meta": {
     "graphVersion": "v24.0"

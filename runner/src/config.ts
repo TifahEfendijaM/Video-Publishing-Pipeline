@@ -13,6 +13,7 @@ export interface PipelineConfig {
     youtube: {
       enabled: boolean;
       expectedChannelId: string;
+      expectedChannelHandle: string;
       provider: "auto" | "official" | "buffer";
       apiProjectAudited: boolean;
       uploadPrivateWhenUnaudited: boolean;
@@ -22,7 +23,7 @@ export interface PipelineConfig {
     };
   };
   stories: { longVideoPolicy: "skip" | "segment" };
-  captions: { model: string; effort: "low" | "medium" | "high" };
+  captions: { provider: "cloudflare_workers_ai"; model: string };
   meta: { graphVersion: string };
   hosting: { presignedUrlTtlSeconds: number };
   polling: { metaMaxMinutes: number; bufferMaxMinutes: number; youtubeMaxMinutes: number };
@@ -42,7 +43,7 @@ export const SECRET_NAMES = [
   "META_APP_ID",
   "META_APP_SECRET",
   "BUFFER_API_KEY",
-  "ANTHROPIC_API_KEY",
+  "CLOUDFLARE_AI_TOKEN",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
   "CREDENTIALS_ENCRYPTION_KEY",

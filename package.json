@@ -12,7 +12,6 @@
     "worker:deploy": "wrangler deploy --config worker/wrangler.generated.toml"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0",
     "aws4fetch": "^1.0.20",
     "zod": "^4.6.5"
   },

@@ -2,7 +2,7 @@
 
 Publishes one video at a time from the Google Drive folder **EasyBosnian educational videos** to
 Instagram (Reel + Story), Facebook (Reel or Page video + Story), TikTok (video post via Buffer) and
-YouTube (Short or video, see limits), on a weekly Europe/Sarajevo schedule or on demand.
+YouTube (Shorts via Buffer; other videos uploaded private for manual publishing), on a weekly Europe/Sarajevo schedule or on demand.
 Separate from the image-card pipeline: no shared code, Worker, database or credentials.
 
 ```
@@ -10,7 +10,7 @@ Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner
   ├─ reads saved Sarajevo schedule from D1           ├─ checks claim / kill switch / staleness
   ├─ due? → atomic claim of the occurrence           ├─ Drive: list folder, entry times, download once
   └─ workflow_dispatch → scheduled-publish.yml ───▶  ├─ ffprobe → format plan; ffmpeg Story canvas
-      (exact repo, workflow, branch; 1 attempt)      ├─ captions (generic or Claude, validated)
+      (exact repo, workflow, branch; 1 attempt)      ├─ captions (generic, or free Workers AI, validated)
                                                      ├─ Meta Graph · Buffer · YouTube Data API
   D1 = single source of truth  ◀── state API ──────  └─ confirmed read-back → GitHub run summary
 ```
