@@ -26,6 +26,9 @@ export class StateClient {
   configureAutomated(b: { scheduleText: string | null; selectionPolicy: "fifo" | "lifo" | null; pendingCustom: { fileId: string; fileName: string } | null; actor: string }) {
     return this.call("POST", "/api/config/automated", b);
   }
+  setOutros(changes: Record<string, { fileId: string; fileName: string } | null>, actor: string) {
+    return this.call("POST", "/api/config/outros", { changes, actor });
+  }
   setPublishing(enabled: boolean, actor: string) {
     return this.call("POST", "/api/config/publishing", { enabled, actor });
   }

@@ -168,8 +168,13 @@ export function buildTasks(o: {
   providers: Providers;
   identities: Identities;
   youtube?: { plan: YouTubeVersions; shortPath: string | null; regularPath: string | null };
+  /** per-platform feed file (the video with that platform's outro appended), default: original */
+  feedPaths?: Partial<Record<"instagram" | "facebook" | "tiktok", string>>;
 }): Task[] {
   const { cfg, feed, stories, originalPath, captions, providers, identities } = o;
+  const igPath = o.feedPaths?.instagram ?? originalPath;
+  const fbPath = o.feedPaths?.facebook ?? originalPath;
+  const ttPath = o.feedPaths?.tiktok ?? originalPath;
   const d = cfg.destinations;
   const tasks: Task[] = [];
   const storyBlock = (): Task["blocked"] | undefined => {
@@ -186,7 +191,7 @@ export function buildTasks(o: {
       surface: "feed",
       provider: "meta_graph",
       format: "reel",
-      mediaPath: originalPath,
+      mediaPath: igPath,
       needsUrl: true,
       blocked: identityBlock(identities.instagram) ?? (!feed.instagram.check.ok ? { status: "unsupported", detail: `Source incompatible with Instagram Reels: ${feed.instagram.check.problems.join("; ")}. Not uploaded.` } : undefined) ?? (!providers.meta ? { status: "disabled", detail: "META_PAGE_ACCESS_TOKEN not configured" } : undefined),
       run: (c) => providers.meta!.instagram(d.instagram.expectedUserId, "REELS", c.url!, captions.caption, c.gate, c.progress),
@@ -213,13 +218,13 @@ export function buildTasks(o: {
       surface: "feed",
       provider: "meta_graph",
       format: feed.facebook.format,
-      mediaPath: originalPath,
+      mediaPath: fbPath,
       needsUrl: false,
       blocked: identityBlock(identities.facebook) ?? (!feed.facebook.check.ok ? { status: "unsupported", detail: `Source incompatible with Facebook: ${feed.facebook.check.problems.join("; ")}. Not uploaded.` } : undefined) ?? (!providers.meta ? { status: "disabled", detail: "META_PAGE_ACCESS_TOKEN not configured" } : undefined),
       run: (c) =>
         feed.facebook.format === "reel"
-          ? providers.meta!.facebookReel(d.facebook.expectedPageId, originalPath, captions.caption, c.gate, c.progress)
-          : providers.meta!.facebookPageVideo(d.facebook.expectedPageId, originalPath, captions.youtubeTitle, captions.caption, c.gate, c.progress),
+          ? providers.meta!.facebookReel(d.facebook.expectedPageId, fbPath, captions.caption, c.gate, c.progress)
+          : providers.meta!.facebookPageVideo(d.facebook.expectedPageId, fbPath, captions.youtubeTitle, captions.caption, c.gate, c.progress),
     });
     if (d.facebook.story) {
       for (const s of storySurfaces) {
@@ -243,7 +248,7 @@ export function buildTasks(o: {
       surface: "feed",
       provider: "buffer",
       format: "video",
-      mediaPath: originalPath,
+      mediaPath: ttPath,
       needsUrl: true,
       blocked: identityBlock(identities.tiktok) ?? (!feed.tiktok.check.ok ? { status: "unsupported", detail: `Source incompatible with TikTok: ${feed.tiktok.check.problems.join("; ")}. Not uploaded.` } : undefined) ?? (!providers.buffer ? { status: "disabled", detail: "BUFFER_API_KEY not configured" } : undefined),
       run: (c) => providers.buffer!.publish({ channelId: d.tiktok.expectedBufferChannelId, text: captions.caption, videoUrl: c.url! }, c.gate, c.progress),

@@ -11,6 +11,7 @@ import {
   mayPublish,
   observeVideos,
   setPublishing,
+  setOutros,
   type Env,
 } from "../worker/src/logic";
 import { route } from "../worker/src/index";
@@ -333,5 +334,18 @@ describe("temporary media hosting (Workers KV)", () => {
     const { e } = kvEnv();
     const r = await route(new Request("https://w/api/media", { method: "POST", body: "x", headers: { ...auth, "content-length": String(30 * 1024 * 1024) } }), e);
     expect(r.status).toBe(413);
+  });
+});
+
+describe("outros", () => {
+  it("set / keep / remove per platform without invalidating queued runs", async () => {
+    const e = env();
+    const v0 = (await getSettings(e.DB)).configVersion;
+    await setOutros(e.DB, { youtube: { fileId: "1Edf0K75AQEhJOLWsWYYY61C96B_HrojG", fileName: "outro_yt.mp4" }, tiktok: { fileId: "1p6_I1DeHCe2fKSSdDo3F69aqDiwUrmak", fileName: "outro_tt.mp4" } }, "t", NOW);
+    await setOutros(e.DB, { tiktok: null }, "t", NOW); // remove TikTok, YouTube unchanged
+    const s = await getSettings(e.DB);
+    expect(s.outros).toEqual({ youtube: { fileId: "1Edf0K75AQEhJOLWsWYYY61C96B_HrojG", fileName: "outro_yt.mp4" } });
+    expect(s.configVersion).toBe(v0);
+    await expect(setOutros(e.DB, { snapchat: null } as any, "t", NOW)).rejects.toThrow(/unknown outro platform/);
   });
 });

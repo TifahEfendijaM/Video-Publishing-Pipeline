@@ -24,6 +24,22 @@ on:
         description: "Enter weekly days and times in Europe/Sarajevo. Leave empty to retain the last saved schedule. Initial default: Friday at 05:00."
         type: string
         required: false
+      outro_youtube:
+        description: "Outro for YouTube (both the video and the Short): full filename of a clip in the Drive folder. Empty = keep the current outro. Type none to remove it."
+        type: string
+        required: false
+      outro_tiktok:
+        description: "Outro for TikTok: full filename of a clip in the Drive folder. Empty = keep the current outro. Type none to remove it."
+        type: string
+        required: false
+      outro_instagram:
+        description: "Outro for the Instagram Reel: full filename of a clip in the Drive folder. Empty = keep the current outro. Type none to remove it."
+        type: string
+        required: false
+      outro_facebook:
+        description: "Outro for the Facebook video: full filename of a clip in the Drive folder. Empty = keep the current outro. Type none to remove it."
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -52,6 +68,10 @@ jobs:
           VIDEO_SELECTION: ${{ inputs.video_selection }}
           CUSTOM_VIDEO_NAME: ${{ inputs.custom_video_name }}
           SCHEDULE_TEXT: ${{ inputs.schedule }}
+          OUTRO_YOUTUBE: ${{ inputs.outro_youtube }}
+          OUTRO_TIKTOK: ${{ inputs.outro_tiktok }}
+          OUTRO_INSTAGRAM: ${{ inputs.outro_instagram }}
+          OUTRO_FACEBOOK: ${{ inputs.outro_facebook }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}

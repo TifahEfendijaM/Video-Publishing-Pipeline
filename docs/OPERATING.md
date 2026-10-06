@@ -15,6 +15,20 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 | `custom_video_name` | text | Complete filename including extension. Empty / not found / duplicated name → the saved policy is used and the summary says why. |
 | `schedule` | text | Weekly days + times in Europe/Sarajevo (automated only). Empty keeps the last saved schedule; initial default Friday 05:00. |
 
+### Outro fields (`outro_youtube`, `outro_tiktok`, `outro_instagram`, `outro_facebook`)
+
+- Enter the full filename (with extension) of a clip in the Drive folder to make it that platform's outro.
+  It is saved and used for every later run (manual and scheduled) until you change it.
+- **Empty = no change.** Type `none` to remove that platform's outro.
+- The outro is appended to the end of the main post (YouTube video and Short, TikTok video, Instagram Reel,
+  Facebook video). Stories are posted without outros. The joined file keeps the main video's frame size;
+  an outro of a different shape is fitted inside it with black bars, and a silent clip gets silence.
+- Outro clips are never chosen by FIFO/LIFO: neither the configured outro files nor **any file whose name
+  contains "outro"** (name your outro clips e.g. `outro_youtube.mp4` so they are excluded even before you
+  configure them). They can still be selected deliberately with `custom`.
+- If an outro file is deleted or moved out of the folder, that platform is published without it and the
+  summary says so. Changing outros never cancels an already-planned scheduled run.
+
 ## Schedule syntax
 
 Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically).

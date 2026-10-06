@@ -17,6 +17,7 @@ import {
   publicationsFor,
   putCredential,
   setPublishing,
+  setOutros,
   stateView,
   timingSafeEqual,
   upsertPublication,
@@ -84,6 +85,8 @@ export async function route(req: Request, env: Env): Promise<Response> {
       return json(await configureManual(db, b, now));
     case "/api/config/automated":
       return json(await configureAutomated(db, b, now));
+    case "/api/config/outros":
+      return json(await setOutros(db, b.changes, b.actor, now));
     case "/api/config/publishing":
       if (typeof b.enabled !== "boolean") throw new HttpError(400, "enabled must be boolean");
       return json(await setPublishing(db, b.enabled, b.actor, now));

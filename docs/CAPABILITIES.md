@@ -20,6 +20,12 @@ YouTube channel/scopes) before anything goes live.
 
 A provider accepting an upload, or Buffer accepting a post, is shown as *processing*, not *confirmed*.
 
+### Outros and TikTok guidelines
+TikTok's content-sharing guidelines tell integrators not to add their own branding, watermarks or promotional
+links to shared content. Your outro is your own EasyBosnian content, not a third-party watermark, but if it is
+mainly a promotional end card, TikTok could still treat it strictly. You can remove the TikTok outro any time
+(`outro_tiktok` = `none`).
+
 ### Genuine blockers today
 1. **TikTok Stories**: no supported API → always *Unsupported / manual*.
 2. **YouTube volume**: Upload-Post's free plan allows 10 uploads per month. A schedule with more than

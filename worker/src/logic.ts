@@ -40,6 +40,10 @@ export class HttpError extends Error {
   }
 }
 
+export const OUTRO_PLATFORMS = ["youtube", "tiktok", "instagram", "facebook"] as const;
+export type OutroPlatform = (typeof OUTRO_PLATFORMS)[number];
+export type Outros = Partial<Record<OutroPlatform, { fileId: string; fileName: string }>>;
+
 export interface Settings {
   automationEnabled: boolean;
   automationEnabledAt: string | null;
@@ -49,6 +53,7 @@ export interface Settings {
   scheduleIsDefault: boolean;
   selectionPolicy: "fifo" | "lifo";
   pendingCustom: { fileId: string; fileName: string | null; configVersion: number } | null;
+  outros: Outros;
   publishingEnabled: boolean;
   configVersion: number;
   updatedAt: string;
@@ -102,6 +107,7 @@ export async function getSettings(db: Db): Promise<Settings> {
     configVersion: r.config_version,
     updatedAt: r.updated_at,
     updatedBy: r.updated_by ?? null,
+    outros: r.outros_json ? JSON.parse(r.outros_json) : {},
   };
 }
 
@@ -422,4 +428,22 @@ export async function putCredential(db: Db, name: string, ciphertext: string, no
   if (!/^[a-z0-9_]{1,64}$/.test(name) || ciphertext.length > 20000) throw new HttpError(400, "invalid credential");
   await db.prepare("INSERT INTO credentials (name, ciphertext, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET ciphertext = excluded.ciphertext, updated_at = excluded.updated_at").bind(name, ciphertext, iso(nowMs)).run();
   return { ok: true };
+}
+
+/**
+ * Per-platform outros. For each platform: an object sets it, null removes it, absent leaves it unchanged.
+ * Outros are applied when a run publishes; changing them does not invalidate queued scheduled runs.
+ */
+export async function setOutros(db: Db, changes: Partial<Record<string, { fileId: string; fileName: string } | null>>, actor: string | undefined, nowMs: number) {
+  const current = (await getSettings(db)).outros;
+  const next: Outros = { ...current };
+  for (const [k, v] of Object.entries(changes ?? {})) {
+    if (!(OUTRO_PLATFORMS as readonly string[]).includes(k)) throw new HttpError(400, `unknown outro platform ${k}`);
+    if (v === null) delete next[k as OutroPlatform];
+    else if (v && typeof v.fileId === "string" && /^[A-Za-z0-9_-]{10,200}$/.test(v.fileId) && typeof v.fileName === "string") next[k as OutroPlatform] = { fileId: v.fileId, fileName: v.fileName.slice(0, 300) };
+    else throw new HttpError(400, `invalid outro for ${k}`);
+  }
+  await db.prepare("UPDATE settings SET outros_json = ?, updated_at = ?, updated_by = ? WHERE id = 1").bind(JSON.stringify(next), iso(nowMs), actor ?? "outros").run();
+  await log(db, "config.outros", { outros: Object.fromEntries(Object.entries(next).map(([k, v]) => [k, v?.fileName])) }, nowMs);
+  return stateView(db, nowMs);
 }

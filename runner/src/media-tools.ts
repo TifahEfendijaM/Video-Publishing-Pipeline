@@ -59,3 +59,28 @@ export function renderStory(src: string, dest: string, info: MediaInfo, segment?
 export function renderWidescreen(src: string, dest: string, info: MediaInfo): Promise<void> {
   return renderCanvas(src, dest, info, WIDESCREEN_CANVAS);
 }
+
+/**
+ * Append an outro clip to the end of a video. The result keeps the main video's frame size; the outro is
+ * fitted inside it (aspect preserved, black bars, no crop). Clips without audio get silence so the joined
+ * file always has one continuous audio track. Re-encoded (H.264/AAC), bitrate-capped for temporary hosting.
+ */
+export async function concatWithOutro(main: string, mainInfo: MediaInfo, outro: string, outroInfo: MediaInfo, dest: string): Promise<void> {
+  const W = mainInfo.width - (mainInfo.width % 2);
+  const H = mainInfo.height - (mainInfo.height % 2);
+  const fps = Math.min(60, Math.max(24, Math.round(mainInfo.fps)));
+  const args = ["-y", "-v", "error", "-i", main, "-i", outro];
+  let next = 2;
+  const audioIn = (info: MediaInfo, idx: number) => {
+    if (info.audioCodec) return `${idx}:a:0`;
+    args.push("-f", "lavfi", "-t", String(info.durationSec), "-i", "anullsrc=r=48000:cl=stereo");
+    return `${next++}:a:0`;
+  };
+  const a0 = audioIn(mainInfo, 0);
+  const a1 = audioIn(outroInfo, 1);
+  const v = (i: number) => `[${i}:v:0]scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps},format=yuv420p[v${i}]`;
+  const a = (src: string, i: number) => `[${src}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`;
+  const graph = [v(0), v(1), a(a0, 0), a(a1, 1), "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"].join(";");
+  args.push("-filter_complex", graph, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-maxrate", "3500k", "-bufsize", "7M", "-profile:v", "high", "-g", String(fps * 2), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", dest);
+  await run("ffmpeg", args, { maxBuffer: 10 * 1024 * 1024 });
+}

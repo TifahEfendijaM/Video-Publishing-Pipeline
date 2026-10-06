@@ -9,7 +9,7 @@ import { AmbiguousOutcome, SafeFailure } from "../src/shared/status";
 import { redact, registerSecret } from "../src/shared/redact";
 import { makeCaptions } from "../runner/src/captioner";
 import { encrypt, decrypt } from "../runner/src/google";
-import { probe, renderStory, renderWidescreen, renderCanvas, parseProbe } from "../runner/src/media-tools";
+import { probe, renderStory, renderWidescreen, renderCanvas, parseProbe, concatWithOutro } from "../runner/src/media-tools";
 import { planFeed, planStory, planYouTubeVersions, storySegments } from "../src/shared/media";
 import { loadConfig } from "../runner/src/config";
 import { Summary } from "../runner/src/summary";
@@ -146,6 +146,14 @@ describe("buildTasks routing", () => {
     const yt = withYt({ ...horizontal, durationSec: 240 }, withBuffer()).filter((x) => x.platform === "youtube");
     expect(yt[0].blocked!.status).toBe("unsupported");
     expect(yt[1].provider).toBe("upload_post");
+  });
+
+  it("feed posts use each platform's outro version; Stories keep the original", () => {
+    const t = buildTasks({ cfg, info: horizontal, feed: planFeed(horizontal), stories: { plan: planStory(horizontal, "segment"), files: [] }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: allOk, feedPaths: { instagram: "/ig.mp4", facebook: "/fb.mp4", tiktok: "/tt.mp4" } });
+    expect(t.find((x) => x.platform === "instagram" && x.surface === "feed")!.mediaPath).toBe("/ig.mp4");
+    expect(t.find((x) => x.platform === "facebook" && x.surface === "feed")!.mediaPath).toBe("/fb.mp4");
+    expect(t.find((x) => x.platform === "tiktok" && x.surface === "feed")!.mediaPath).toBe("/tt.mp4");
+    expect(t.find((x) => x.platform === "instagram" && x.surface === "story")!.mediaPath).toBe("/o.mp4");
   });
 
   it("missing routes are reported, never silently skipped; Upload-Post absent → private official fallback", () => {
@@ -392,6 +400,18 @@ describe("ffprobe / ffmpeg", () => {
     expect([s.width, s.height]).toEqual([1920, 1080]);
     const left = execFileSync("ffmpeg", ["-v", "error", "-i", out, "-frames:v", "1", "-vf", "crop=200:1080:0:0", "-f", "rawvideo", "-pix_fmt", "gray", "-"]);
     expect(left.reduce((m, x) => Math.max(m, x), 0)).toBeLessThan(30);
+  }, 60_000);
+
+  it("appends an outro: keeps the main frame size, fits a differently shaped silent outro, one continuous audio track", async () => {
+    const outro = join(dir, "outro.mp4");
+    execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=red:size=720x1280:rate=30:duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", outro]);
+    const out = join(dir, "joined.mp4");
+    await concatWithOutro(src, await probe(src), outro, await probe(outro), out);
+    const j = await probe(out);
+    expect([j.width, j.height]).toEqual([1280, 720]);
+    expect(j.durationSec).toBeGreaterThan(10.8);
+    expect(j.durationSec).toBeLessThan(11.3);
+    expect(j.audioCodec).toBe("aac");
   }, 60_000);
 
   it("segment rendition covers the requested time range", async () => {

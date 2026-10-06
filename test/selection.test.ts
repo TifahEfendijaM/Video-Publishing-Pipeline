@@ -117,3 +117,15 @@ describe("custom selection", () => {
     expect(r.video!.id).toBe("idC");
   });
 });
+
+describe("outro clips", () => {
+  const vids = [v("idO", "EasyBosnian outro youtube.mp4", "2000-01-01T00:00:00Z"), v("idX", "special_end_clip.mp4", "2001-01-01T00:00:00Z"), ...videos];
+  it("are never picked automatically (by name or by configured ID), but custom may pick them", () => {
+    const r = selectVideo({ policy: "fifo", videos: vids, records: new Map(), excludeIds: new Set(["idX"]) });
+    expect(r.video!.id).not.toBe("idO");
+    expect(r.video!.id).not.toBe("idX");
+    expect(r.eligibleCount).toBe(3);
+    expect(r.notes.join()).toMatch(/2 outro clip/);
+    expect(selectVideo({ policy: "fifo", customName: "special_end_clip.mp4", videos: vids, records: new Map(), excludeIds: new Set(["idX"]) }).video!.id).toBe("idX");
+  });
+});

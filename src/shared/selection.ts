@@ -85,6 +85,12 @@ export interface SelectionInput {
   pendingCustomFileName?: string | null;
   videos: FolderVideo[]; // successful listing of the folder (videos only)
   records: Map<string, VideoRecord>;
+  excludeIds?: Set<string>; // configured outro clips: never picked by FIFO/LIFO (custom may still pick them)
+}
+
+/** Outro clips are excluded from automatic selection: configured outros, and any file whose name contains "outro". */
+export function isOutroName(name: string): boolean {
+  return /outro/i.test(name);
 }
 
 export interface SelectionResult {
@@ -120,7 +126,9 @@ export function selectVideo(input: SelectionInput): SelectionResult {
     if (r.kind === "ambiguous") fallback = `${r.count} videos in the folder are named "${r.name}"; the custom choice is ambiguous, so the saved ${input.policy.toUpperCase()} policy is used.`;
   }
 
-  const eligible = ranked.filter((v) => !input.records.get(v.id)?.consumed);
+  const outros = ranked.filter((v) => input.excludeIds?.has(v.id) || isOutroName(v.name));
+  if (outros.length) notes.push(`${outros.length} outro clip(s) excluded from automatic selection: ${outros.map((v) => v.name).join(", ")}.`);
+  const eligible = ranked.filter((v) => !input.records.get(v.id)?.consumed && !outros.includes(v));
   const ordered = orderVideos(eligible, input.policy);
   if (ordered.some((v) => v.entrySource === "created_time_approximation")) {
     notes.push("Some folder-entry times are approximated by Drive createdTime (exact entry time unavailable).");

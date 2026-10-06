@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { loadConfig, secrets, type PipelineConfig } from "./config";
 import { StateClient } from "./state-client";
 import { Drive, DRIVE_SCOPES, serviceAccountEmail, serviceAccountToken, oauthAccessToken, syncEntryTimes } from "./google";
-import { probe, renderStory, renderCanvas, renderWidescreen } from "./media-tools";
+import { probe, renderStory, renderCanvas, renderWidescreen, concatWithOutro } from "./media-tools";
+import type { MediaInfo } from "../../src/shared/media";
+import { resolveCustomName } from "../../src/shared/selection";
 import { makeCaptions } from "./captioner";
 import { KvHosting, R2Hosting } from "./hosting";
 import { statSync } from "node:fs";
@@ -124,6 +126,7 @@ function settingsRows(s: any, next: any[]): [string, string][] {
     ["Saved weekly schedule (Europe/Sarajevo)", `${s.scheduleText}${s.scheduleIsDefault ? " (initial default)" : ""}`],
     ["Saved selection policy", s.selectionPolicy.toUpperCase()],
     ["Pending one-time custom video", s.pendingCustom ? `${s.pendingCustom.fileName ?? ""} (${s.pendingCustom.fileId})` : "none"],
+    ["Outros", ["youtube", "tiktok", "instagram", "facebook"].map((p) => `${p}: ${s.outros?.[p]?.fileName ?? "none"}`).join("\n")],
     ["Live publishing kill switch", s.publishingEnabled ? "ON (live publishing allowed)" : "OFF (nothing will be published)"],
     ["Next scheduled occurrences", s.automationEnabled ? next.map((o) => o.local).join("\n") || "none" : "none (automation disabled)"],
   ];
@@ -149,13 +152,15 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   const s = o.summary;
   const d = await drive();
   const folder = await folderState(d, o.state);
+  const outros: Record<string, { fileId: string; fileName: string }> = (await o.state.state()).settings.outros ?? {};
+  const excludeIds = new Set(Object.values(outros).map((x) => x.fileId));
   let sel;
   if (o.forcedFileId) {
     const v = folder.videos.find((x) => x.id === o.forcedFileId);
     if (!v) throw new Error(`Video ${o.forcedFileId} is no longer in the folder; cannot retry.`);
     sel = { ...selectVideo({ policy: o.policy, pendingCustomFileId: v.id, pendingCustomFileName: v.name, videos: [v], records: folder.records }), method: "retry" as const };
   } else {
-    sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: folder.videos, records: folder.records });
+    sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: folder.videos, records: folder.records, excludeIds });
   }
   s.h(2, "Video selection");
   s.kv([
@@ -186,8 +191,42 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     const original = join(work, "original.mp4");
     await d.download(v.id, original);
     const info = await probe(original);
-    const feed = planFeed(info);
-    const ytPlan = planYouTubeVersions(info);
+    // Outros: per platform, the selected video + that platform's outro clip (Stories stay without outro).
+    type Base = { path: string; info: MediaInfo; outro: string | null };
+    const bases: Record<"youtube" | "tiktok" | "instagram" | "facebook", Base> = {} as any;
+    const joined = new Map<string, Base>();
+    const outroNotes: string[] = [];
+    for (const plat of ["youtube", "tiktok", "instagram", "facebook"] as const) {
+      const ou = outros[plat];
+      bases[plat] = { path: original, info, outro: null };
+      if (!ou) continue;
+      if (ou.fileId === v.id) {
+        outroNotes.push(`${plat}: the selected video is itself the ${plat} outro, so no outro is appended.`);
+        continue;
+      }
+      const clip = folder.videos.find((x) => x.id === ou.fileId);
+      if (!clip) {
+        outroNotes.push(`${plat}: outro "${ou.fileName}" is no longer in the folder; published WITHOUT an outro.`);
+        continue;
+      }
+      if (!joined.has(clip.id)) {
+        const i = joined.size + 1;
+        const op = join(work, `outro_${i}.mp4`);
+        await d.download(clip.id, op);
+        const oinfo = await probe(op);
+        const out = join(work, `with_outro_${i}.mp4`);
+        await concatWithOutro(original, info, op, oinfo, out);
+        joined.set(clip.id, { path: out, info: await probe(out), outro: clip.name });
+      }
+      bases[plat] = joined.get(clip.id)!;
+    }
+    const feed = {
+      instagram: planFeed(bases.instagram.info).instagram,
+      facebook: planFeed(bases.facebook.info).facebook,
+      tiktok: planFeed(bases.tiktok.info).tiktok,
+      youtube: planFeed(bases.youtube.info).youtube,
+    };
+    const ytPlan = planYouTubeVersions(bases.youtube.info);
     const storyPlan = planStory(info, cfg.stories.longVideoPolicy);
     s.h(2, "Media");
     s.kv([
@@ -196,6 +235,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       ["Video", `${info.videoCodec}, ${info.fps} fps, ${info.pixFmt ?? "?"}`],
       ["Audio", info.audioCodec ? `${info.audioCodec} ${info.audioSampleRate ?? ""} Hz` : "none"],
       ["Size", `${(info.sizeBytes / 1024 / 1024).toFixed(2)} MB`],
+      ["Outros", (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => `${p}: ${bases[p].outro ? `${bases[p].outro} appended (${bases[p].info.durationSec.toFixed(1)} s total)` : "none"}`).join("\n")],
       ["Instagram", `Reel${feed.instagram.check.ok ? "" : ` — incompatible: ${feed.instagram.check.problems.join("; ")}`}`],
       ["Facebook", feed.facebook.reason],
       ["TikTok", feed.tiktok.check.ok ? "video post" : `incompatible: ${feed.tiktok.check.problems.join("; ")}`],
@@ -203,6 +243,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       ["YouTube regular video", ytPlan.regular.reason],
       ["Stories", storyPlan.kind === "single" ? (storyPlan.needsRendition ? `Story rendition: ${storyPlan.renditionReason}` : "original file used") : storyPlan.kind === "segmented" ? storyPlan.renditionReason : storyPlan.reason],
     ]);
+    if (outroNotes.length) s.list(outroNotes);
 
     const stories: StoryFiles = { plan: storyPlan, files: [] };
     if (storyPlan.kind === "single" && storyPlan.needsRendition) {
@@ -220,15 +261,18 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     if (cfg.destinations.youtube.enabled) {
       if (cfg.destinations.youtube.short.enabled && ytPlan.short.kind === "vertical_canvas") {
         youtube.shortPath = join(work, "youtube_short.mp4");
-        await renderCanvas(original, youtube.shortPath, info, { width: 1080, height: 1920 });
+        await renderCanvas(bases.youtube.path, youtube.shortPath, bases.youtube.info, { width: 1080, height: 1920 });
       }
       if (cfg.destinations.youtube.regular.enabled && ytPlan.regular.kind === "widescreen_canvas") {
         youtube.regularPath = join(work, "youtube_video.mp4");
-        await renderWidescreen(original, youtube.regularPath, info);
+        await renderWidescreen(bases.youtube.path, youtube.regularPath, bases.youtube.info);
       }
+      // No rendition needed but an outro was appended: the joined file is the version to upload.
+      if (!youtube.shortPath && ytPlan.short.kind === "original" && bases.youtube.outro) youtube.shortPath = bases.youtube.path;
+      if (!youtube.regularPath && ytPlan.regular.kind === "original" && bases.youtube.outro) youtube.regularPath = bases.youtube.path;
     }
     if (o.preview && env("PREVIEW_DIR")) {
-      for (const [name, p] of [["youtube_short", youtube.shortPath], ["youtube_video", youtube.regularPath]] as const) if (p) copyFileSync(p, join(env("PREVIEW_DIR"), `${name}.mp4`));
+      for (const [name, p] of [["youtube_short", youtube.shortPath], ["youtube_video", youtube.regularPath], ...[...joined.values()].map((b, i) => [`with_outro_${i + 1}`, b.path] as const)] as const) if (p) copyFileSync(p, join(env("PREVIEW_DIR"), `${name}.mp4`));
     }
     if (o.preview && stories.files.length && env("PREVIEW_DIR")) {
       for (const f of stories.files) copyFileSync(f.path, join(env("PREVIEW_DIR"), `${f.surface}.mp4`));
@@ -250,7 +294,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     s.h(2, "Destination identity checks");
     s.table(["Destination", "Verified", "Detail"], Object.entries(ids).map(([k, c]) => [k, c.ok ? "✅" : "❌", c.detail]));
 
-    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube });
+    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube, feedPaths: { instagram: bases.instagram.path, facebook: bases.facebook.path, tiktok: bases.tiktok.path } });
     if (o.filter) tasks = tasks.filter((t) => o.filter!.has(`${t.platform}:${t.surface}`));
 
     if (o.preview) {
@@ -312,6 +356,32 @@ async function cmdConfigure() {
   const scheduleText = process.env.SCHEDULE_TEXT ?? "";
   const actor = env("GITHUB_ACTOR") || "github";
   if (!["manual_now", "automated"].includes(mode)) throw new Error("run_mode must be manual_now or automated");
+  const outroInputs = { youtube: process.env.OUTRO_YOUTUBE ?? "", tiktok: process.env.OUTRO_TIKTOK ?? "", instagram: process.env.OUTRO_INSTAGRAM ?? "", facebook: process.env.OUTRO_FACEBOOK ?? "" };
+  /** Resolve the outro fields: empty = unchanged, "none" = remove, filename = set (if it matches exactly one file). */
+  const applyOutros = async (): Promise<string[]> => {
+    const entries = Object.entries(outroInputs).filter(([, v]) => v.trim() !== "");
+    if (!entries.length) return [];
+    const notes: string[] = [];
+    const changes: Record<string, { fileId: string; fileName: string } | null> = {};
+    let videos: FolderVideo[] | null = null;
+    for (const [plat, raw] of entries) {
+      const val = raw.trim();
+      if (/^(none|remove|-)$/i.test(val)) {
+        changes[plat] = null;
+        notes.push(`${plat} outro removed.`);
+        continue;
+      }
+      videos ??= await (await drive()).listVideos(); // auth/network errors abort; never treated as "not found"
+      const r = resolveCustomName(val, videos);
+      if (r.kind === "match") {
+        changes[plat] = { fileId: r.video.id, fileName: r.video.name };
+        notes.push(`${plat} outro set to ${r.video.name}.`);
+      } else if (r.kind === "ambiguous") notes.push(`${plat} outro unchanged: ${r.count} files are named "${r.name}".`);
+      else notes.push(`${plat} outro unchanged: no video named "${val}" in the folder.`);
+    }
+    if (Object.keys(changes).length) await state.setOutros(changes, actor);
+    return notes;
+  };
   if (!["fifo", "lifo", "custom"].includes(selection)) throw new Error("video_selection must be fifo, lifo or custom");
   const policyChoice = selection === "custom" ? null : (selection as SelectionPolicy);
 
@@ -322,6 +392,7 @@ async function cmdConfigure() {
     if (selection !== "custom" && customName.trim()) ignored.push("custom_video_name (only used when video_selection = custom)");
     // 1) disable automation FIRST (retaining the saved schedule), 2) select, 3) publish now.
     const cfgView = await state.configureManual({ selectionPolicy: policyChoice, actor });
+    const outroNotes = await applyOutros();
     const begin = await state.beginRun({ origin: "manual", githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
     s.kv([
       ["Origin", "manual (manual_now)"],
@@ -329,6 +400,7 @@ async function cmdConfigure() {
       ["Run ID", begin.runId],
       ["Ignored fields", ignored.join("; ") || "none"],
     ]);
+    if (outroNotes.length) s.list(outroNotes);
     s.h(2, "Saved configuration (automation disabled before publishing)");
     s.kv(settingsRows(cfgView.settings, cfgView.nextOccurrences));
     try {
@@ -378,6 +450,7 @@ async function cmdConfigure() {
       else if (r.kind === "ambiguous") notes.push(`${r.count} videos are named "${r.name}": ambiguous, so the saved FIFO/LIFO policy will be used.`);
     }
   } else if (customName.trim()) notes.push("custom_video_name ignored because video_selection is not custom.");
+  notes.push(...(await applyOutros()));
   const view = await state.configureAutomated({ scheduleText: normalized, selectionPolicy: policyChoice, pendingCustom: pending, actor });
   s.kv([
     ["Origin", "manual configuration (automated)"],

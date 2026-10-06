@@ -5,7 +5,7 @@ import type { Db, Stmt } from "../worker/src/logic";
 
 export function makeDb(): Db & { raw: DatabaseSync } {
   const raw = new DatabaseSync(":memory:");
-  raw.exec(readFileSync(new URL("../worker/migrations/0001_init.sql", import.meta.url), "utf8"));
+  for (const m of ["0001_init.sql", "0002_outros.sql"]) raw.exec(readFileSync(new URL(`../worker/migrations/${m}`, import.meta.url), "utf8"));
   const prepare = (sql: string): Stmt => {
     let params: unknown[] = [];
     const stmt: Stmt = {
