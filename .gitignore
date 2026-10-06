@@ -1,0 +1,9 @@
+node_modules/
+dist-worker/
+worker/wrangler.generated.toml
+worker/.dev.vars
+worker/.wrangler/
+.wrangler/
+preview/
+*.log
+.env

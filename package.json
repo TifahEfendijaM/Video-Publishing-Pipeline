@@ -1,0 +1,27 @@
+{
+  "name": "easybosnian-video-publishing-pipeline",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p worker/tsconfig.json --noEmit",
+    "runner": "tsx runner/src/main.ts",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.generated.toml"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "aws4fetch": "^1.0.20",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.148.0"
+  }
+}

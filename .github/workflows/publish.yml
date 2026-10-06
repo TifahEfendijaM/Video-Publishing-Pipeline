@@ -1,0 +1,70 @@
+name: Publish video
+
+# The main human control. GitHub shows every field; fields that don't apply to the chosen
+# run_mode / video_selection are ignored (and the run summary says so).
+on:
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "manual_now = disable automation and publish one video now. automated = save & enable the weekly schedule (publishes at the next scheduled time, not now)."
+        type: choice
+        required: true
+        options: [manual_now, automated]
+      video_selection:
+        description: "fifo = oldest eligible video first. lifo = newest eligible video first. custom = use the filename below (one run / next occurrence only)."
+        type: choice
+        required: true
+        default: fifo
+        options: [fifo, lifo, custom]
+      custom_video_name:
+        description: "Enter the complete filename as it appears in the Drive folder, including the extension. If empty or not found, the saved FIFO/LIFO policy will be used."
+        type: string
+        required: false
+      schedule:
+        description: "Enter weekly days and times in Europe/Sarajevo. Leave empty to retain the last saved schedule. Initial default: Friday at 05:00."
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: easybosnian-publishing
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - name: Run
+        run: npx tsx runner/src/main.ts configure
+        env:
+          RUN_MODE: ${{ inputs.run_mode }}
+          VIDEO_SELECTION: ${{ inputs.video_selection }}
+          CUSTOM_VIDEO_NAME: ${{ inputs.custom_video_name }}
+          SCHEDULE_TEXT: ${{ inputs.schedule }}
+          STATE_API_URL: ${{ vars.STATE_API_URL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          STATE_API_TOKEN: ${{ secrets.STATE_API_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          META_PAGE_ACCESS_TOKEN: ${{ secrets.META_PAGE_ACCESS_TOKEN }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
