@@ -1,0 +1,36 @@
+# Template. The deploy workflow (.github/workflows/deploy-worker.yml) fills in the D1 database_id
+# and writes worker/wrangler.generated.toml, which is what actually gets deployed.
+name = "easybosnian-video-scheduler"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[triggers]
+# Fixed UTC wake-up every minute. The real schedule lives in D1 (Europe/Sarajevo slots);
+# the Worker evaluates it against event.scheduledTime.
+crons = ["* * * * *"]
+
+[vars]
+GITHUB_OWNER = "TifahEfendijaM"
+GITHUB_REPO = "Video-Publishing-Pipeline"
+GITHUB_WORKFLOW = "scheduled-publish.yml"
+GITHUB_REF = "main"
+MEDIA_TTL_SECONDS = "21600"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "easybosnian-video-pipeline"
+database_id = "__D1_DATABASE_ID__"
+migrations_dir = "migrations"
+
+# Temporary video hosting (free plan; requests over the free limits fail rather than being billed)
+[[kv_namespaces]]
+binding = "MEDIA"
+id = "__KV_NAMESPACE_ID__"
+
+[observability]
+enabled = true
+
+# Secrets (set by the deploy workflow from GitHub secrets, never committed):
+#   GH_DISPATCH_TOKEN  fine-grained PAT: this repository only, Actions: Read and write
+#   STATE_API_TOKEN    random shared secret between the Worker and the GitHub runner

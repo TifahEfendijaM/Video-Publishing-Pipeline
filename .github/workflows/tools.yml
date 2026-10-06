@@ -1,0 +1,78 @@
+name: Pipeline tools
+
+# Status, verification, private preview, dispatch test, kill switch and outcome handling.
+# verify / preview / status / dispatch_test never publish and never change the selection history.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "status | verify | preview | dispatch_test | publishing_enable | publishing_disable | reconcile | resolve_publication | retry_failed"
+        type: choice
+        required: true
+        default: status
+        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed]
+      target:
+        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. Otherwise ignored."
+        type: string
+        required: false
+      resolution:
+        description: "Only for resolve_publication: what you verified manually on the platform."
+        type: choice
+        required: false
+        default: none
+        options: [none, confirmed, failed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.action == 'retry_failed' && 'easybosnian-publishing' || format('tools-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install ffmpeg
+        if: inputs.action == 'preview' || inputs.action == 'retry_failed'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - run: mkdir -p preview
+      - name: Run
+        run: npx tsx runner/src/main.ts tools
+        env:
+          TOOL_ACTION: ${{ inputs.action }}
+          TOOL_TARGET: ${{ inputs.target }}
+          TOOL_RESOLUTION: ${{ inputs.resolution }}
+          PREVIEW_DIR: ${{ github.workspace }}/preview
+          STATE_API_URL: ${{ vars.STATE_API_URL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          STATE_API_TOKEN: ${{ secrets.STATE_API_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          META_PAGE_ACCESS_TOKEN: ${{ secrets.META_PAGE_ACCESS_TOKEN }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
+          CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
+      - name: Upload private preview files
+        if: inputs.action == 'preview'
+        uses: actions/upload-artifact@v4
+        with:
+          name: story-preview
+          path: preview/
+          if-no-files-found: ignore
+          retention-days: 7

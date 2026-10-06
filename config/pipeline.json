@@ -1,0 +1,70 @@
+{
+  "_comment": "Non-secret pipeline configuration. Expected identities are verified before any publication; an empty value blocks that destination (status: disabled) until it is filled in.",
+  "driveFolderId": "1URObW4ZZtviogsPodnU24mzc2x2eExev",
+  "driveFolderName": "EasyBosnian educational videos",
+  "timeZone": "Europe/Sarajevo",
+  "editedFilePolicy": "same_video",
+  "destinations": {
+    "instagram": {
+      "enabled": true,
+      "provider": "meta_graph",
+      "expectedUserId": "",
+      "expectedUsername": "easy_bosnian",
+      "reel": true,
+      "story": true
+    },
+    "facebook": {
+      "enabled": true,
+      "provider": "meta_graph",
+      "expectedPageId": "",
+      "expectedPageName": "Easy Bosnian",
+      "story": true
+    },
+    "tiktok": {
+      "enabled": true,
+      "provider": "buffer",
+      "expectedBufferChannelId": "",
+      "expectedUsername": "easy.bosnian",
+      "story": "unsupported"
+    },
+    "youtube": {
+      "enabled": true,
+      "expectedChannelId": "",
+      "expectedChannelHandle": "@EasyBosnian",
+      "categoryId": "27",
+      "madeForKids": false,
+      "short": {
+        "enabled": true,
+        "provider": "buffer",
+        "bufferChannelId": ""
+      },
+      "regular": {
+        "enabled": true,
+        "provider": "upload_post",
+        "uploadPostProfile": "easybosnian",
+        "uploadPostMonthlyLimit": 10,
+        "fallbackPrivateOfficialApi": true
+      },
+      "apiProjectAudited": false
+    }
+  },
+  "stories": {
+    "longVideoPolicy": "segment"
+  },
+  "captions": {
+    "provider": "cloudflare_workers_ai",
+    "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  },
+  "meta": {
+    "graphVersion": "v24.0"
+  },
+  "hosting": {
+    "presignedUrlTtlSeconds": 21600
+  },
+  "polling": {
+    "metaMaxMinutes": 15,
+    "bufferMaxMinutes": 20,
+    "youtubeMaxMinutes": 20,
+    "uploadPostMaxMinutes": 20
+  }
+}
