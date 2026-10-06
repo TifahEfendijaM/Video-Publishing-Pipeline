@@ -8,6 +8,7 @@ import type { Gate, IdentityCheck, Outcome, Progress } from "./providers/types";
 import type { Meta } from "./providers/meta";
 import type { Buffer } from "./providers/buffer";
 import type { YouTube } from "./providers/youtube";
+import type { UploadPost } from "./providers/uploadpost";
 
 export interface TaskCtx {
   url?: string; // temporary hosted URL of mediaPath (only when needsUrl)
@@ -141,6 +142,7 @@ export interface Providers {
   buffer?: Buffer;
   youtube?: YouTube;
   youtubeScopes?: string[];
+  uploadPost?: UploadPost;
 }
 export interface Identities {
   instagram: IdentityCheck;
@@ -148,6 +150,7 @@ export interface Identities {
   tiktok: IdentityCheck;
   youtube: IdentityCheck;
   youtubeBuffer: IdentityCheck;
+  youtubeUploadPost: IdentityCheck;
 }
 
 export interface StoryFiles {
@@ -264,8 +267,18 @@ function youtubeTask(o: Parameters<typeof buildTasks>[0]): Task {
   const { cfg, feed, originalPath, captions, providers, identities } = o;
   const y = cfg.destinations.youtube;
   const base = { platform: "youtube" as const, surface: "feed", format: feed.youtube.format, mediaPath: originalPath };
+  if (y.provider === "upload_post" && providers.uploadPost) {
+    // One upload per video. YouTube itself classifies it: vertical/square and <= 3 min => Short, otherwise a regular video.
+    return {
+      ...base,
+      provider: "upload_post",
+      needsUrl: false,
+      blocked: identityBlock(identities.youtubeUploadPost),
+      run: (c) => providers.uploadPost!.upload(originalPath, { title: captions.youtubeTitle, description: captions.youtubeDescription, categoryId: y.categoryId, madeForKids: y.madeForKids }, c.gate, c.progress),
+    };
+  }
   const audited = y.provider !== "buffer" && y.apiProjectAudited;
-  const viaBuffer = !audited && y.provider !== "official" && feed.youtube.format === "short" && !!y.bufferChannelId;
+  const viaBuffer = !audited && (y.provider === "auto" || y.provider === "buffer") && feed.youtube.format === "short" && !!y.bufferChannelId;
   const privateUpload = !audited && !viaBuffer && y.provider !== "buffer" && y.uploadPrivateWhenUnaudited;
 
   if (audited || privateUpload) {

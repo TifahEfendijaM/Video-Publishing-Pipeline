@@ -31,7 +31,9 @@
       "enabled": true,
       "expectedChannelId": "",
       "expectedChannelHandle": "@EasyBosnian",
-      "provider": "auto",
+      "provider": "upload_post",
+      "uploadPostProfile": "easybosnian",
+      "uploadPostMonthlyLimit": 10,
       "apiProjectAudited": false,
       "uploadPrivateWhenUnaudited": true,
       "bufferChannelId": "",
@@ -55,6 +57,7 @@
   "polling": {
     "metaMaxMinutes": 15,
     "bufferMaxMinutes": 20,
-    "youtubeMaxMinutes": 20
+    "youtubeMaxMinutes": 20,
+    "uploadPostMaxMinutes": 20
   }
 }

@@ -63,9 +63,13 @@ Drive file ID.
 
 ## YouTube
 
-Vertical videos up to 3 minutes are Shorts and go out publicly via Buffer. Any other video is uploaded
-**private** via the official API (the project is not audited) and shown as "🚫 Unsupported / manual" with
-its link, so you can make it public in YouTube Studio.
+Each video is uploaded **once**, publicly, via Upload-Post. YouTube has no separate "Shorts upload": it
+classifies the upload itself — vertical or square and up to 3 minutes = a **Short** (all your clips),
+anything else = a regular video. The pipeline never uploads the same clip twice (that would be a duplicate
+on the channel) and never reshapes a vertical clip into a horizontal one.
+
+Upload-Post's free plan allows 10 uploads per month; when it is used up, YouTube is reported as failed
+for that run (nothing is billed) and can be re-attempted next month with `retry_failed`.
 
 ## What "same video" means (Drive file ID)
 

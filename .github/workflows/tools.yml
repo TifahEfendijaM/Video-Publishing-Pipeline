@@ -63,6 +63,7 @@ jobs:
           META_APP_ID: ${{ secrets.META_APP_ID }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          UPLOAD_POST_API_KEY: ${{ secrets.UPLOAD_POST_API_KEY }}
           CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

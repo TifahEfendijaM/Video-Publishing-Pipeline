@@ -15,6 +15,7 @@ import { statSync } from "node:fs";
 import { Meta } from "./providers/meta";
 import { Buffer } from "./providers/buffer";
 import { YouTube } from "./providers/youtube";
+import { UploadPost } from "./providers/uploadpost";
 import { anyMayBeLive, buildTasks, executeTasks, type Identities, type Providers, type StoryFiles, type TaskResult } from "./publish";
 import { Summary, statusLabel } from "./summary";
 import { NO_ELIGIBLE_MESSAGE, selectVideo, type FolderVideo, type SelectionPolicy, type VideoRecord } from "../../src/shared/selection";
@@ -59,6 +60,8 @@ async function providers(state: StateClient): Promise<Providers> {
   if (metaToken) p.meta = new Meta(metaToken, cfg.meta.graphVersion, cfg.polling.metaMaxMinutes);
   const bufferKey = sec("BUFFER_API_KEY");
   if (bufferKey) p.buffer = new Buffer(bufferKey, cfg.polling.bufferMaxMinutes);
+  const upKey = sec("UPLOAD_POST_API_KEY");
+  if (upKey) p.uploadPost = new UploadPost(upKey, cfg.destinations.youtube.uploadPostProfile, cfg.polling.uploadPostMaxMinutes);
   const [id, secret, refresh] = [sec("YOUTUBE_CLIENT_ID"), sec("YOUTUBE_CLIENT_SECRET"), sec("YOUTUBE_REFRESH_TOKEN")];
   if (id && secret && refresh) {
     const t = await oauthAccessToken({ clientId: id, clientSecret: secret, refreshToken: refresh, encryptionKey: sec("CREDENTIALS_ENCRYPTION_KEY"), state, credentialName: "youtube_refresh_token" });
@@ -76,7 +79,8 @@ async function identities(p: Providers): Promise<Identities> {
   const tiktok = p.buffer ? await p.buffer.verifyChannel(d.tiktok.expectedBufferChannelId, "tiktok", d.tiktok.expectedUsername) : missing("BUFFER_API_KEY");
   const youtube = p.youtube ? await p.youtube.verify(d.youtube.expectedChannelId, d.youtube.expectedChannelHandle, p.youtubeScopes ?? []) : missing("YouTube OAuth credentials");
   const youtubeBuffer = p.buffer && d.youtube.bufferChannelId ? await p.buffer.verifyChannel(d.youtube.bufferChannelId, "youtube", null) : { ok: false, detail: "no YouTube channel connected in Buffer (youtube.bufferChannelId empty)" };
-  return { instagram, facebook, tiktok, youtube, youtubeBuffer };
+  const youtubeUploadPost = p.uploadPost ? await p.uploadPost.verify(d.youtube.expectedChannelHandle) : missing("UPLOAD_POST_API_KEY");
+  return { instagram, facebook, tiktok, youtube, youtubeBuffer, youtubeUploadPost };
 }
 
 function r2(): R2Hosting | null {
@@ -368,6 +372,10 @@ async function cmdConfigure() {
   if (pending) s.p(`One-time custom video for the next occurrence: ${pending.fileName} (${pending.fileId}). Afterwards the saved ${view.settings.selectionPolicy.toUpperCase()} policy resumes.`);
   s.h(2, "Effective saved configuration");
   s.kv(settingsRows(view.settings, view.nextOccurrences));
+  const perMonth = Math.round(view.settings.scheduleEffective.length * 4.35 * 10) / 10;
+  if (cfg.destinations.youtube.provider === "upload_post" && perMonth > cfg.destinations.youtube.uploadPostMonthlyLimit) {
+    s.p(`⚠️ This schedule means about ${perMonth} videos per month, but Upload-Post's free plan allows ${cfg.destinations.youtube.uploadPostMonthlyLimit} YouTube uploads per month. Once the limit is reached, YouTube uploads are refused (never billed) and reported as failed until the next month.`);
+  }
   if (!view.settings.publishingEnabled) s.p("⚠️ The live publishing kill switch is OFF: scheduled runs will run and report, but will not publish until it is switched on (Tools → publishing_enable).");
   s.write();
 }
@@ -526,6 +534,8 @@ async function verify(s: Summary, state: StateClient) {
     if (m) prov.meta = new Meta(m, cfg.meta.graphVersion, 1);
     const b = sec("BUFFER_API_KEY");
     if (b) prov.buffer = new Buffer(b, 1);
+    const u = sec("UPLOAD_POST_API_KEY");
+    if (u) prov.uploadPost = new UploadPost(u, cfg.destinations.youtube.uploadPostProfile, 1);
   }
   const ids = await identities(prov);
   for (const [k, c] of Object.entries(ids)) add(`Identity: ${k}`, c.ok, c.detail);
@@ -544,7 +554,7 @@ async function verify(s: Summary, state: StateClient) {
     }
   }
   const y = cfg.destinations.youtube;
-  add("YouTube public-upload eligibility", y.apiProjectAudited, y.apiProjectAudited ? "apiProjectAudited=true (owner confirmed the YouTube API compliance audit)" : `API project NOT audited: Shorts go public via Buffer${y.bufferChannelId ? "" : " (once the channel is connected in Buffer)"}; other videos are uploaded PRIVATE for manual publishing${y.uploadPrivateWhenUnaudited ? "" : " (disabled in config)"}.`);
+  add("YouTube public-upload route", y.provider === "upload_post" ? !!prov.uploadPost : y.apiProjectAudited, y.provider === "upload_post" ? `Upload-Post (audited integration, public uploads; free plan ${y.uploadPostMonthlyLimit} uploads/month)${prov.uploadPost ? "" : " — UPLOAD_POST_API_KEY missing"}. Fallback without it: private upload via the official API.` : y.apiProjectAudited ? "official API, audited" : "official API NOT audited: uploads would be private");
   add("YouTube OAuth app status", null, "Must be 'In production' in Google Cloud (Testing-status refresh tokens expire after 7 days). Not readable via API — confirm in the console.");
   const url = env("STATE_API_URL");
   const token = sec("STATE_API_TOKEN");
@@ -589,11 +599,14 @@ async function reconcile(s: Summary, state: StateClient) {
   if (!prov.meta && metaToken) prov.meta = new Meta(metaToken, cfg.meta.graphVersion, 1);
   const bk = sec("BUFFER_API_KEY");
   if (!prov.buffer && bk) prov.buffer = new Buffer(bk, 0);
+  const uk = sec("UPLOAD_POST_API_KEY");
+  if (!prov.uploadPost && uk) prov.uploadPost = new UploadPost(uk, cfg.destinations.youtube.uploadPostProfile, 0);
   const rows: string[][] = [];
   for (const p of open) {
     let o = null as null | { status: string; url?: string | null; detail?: string | null; remoteId?: string | null };
     if (!p.remote_id) o = null;
     else if (p.provider === "buffer" && prov.buffer) o = await prov.buffer.poll(p.remote_id, 0).catch(() => null);
+    else if (p.provider === "upload_post" && prov.uploadPost) o = await prov.uploadPost.poll(p.remote_id, 0).catch(() => null);
     else if (p.platform === "youtube" && prov.youtube) o = await prov.youtube.poll(p.remote_id, cfg.destinations.youtube.apiProjectAudited, 0).catch(() => null);
     else if (p.platform === "instagram" && prov.meta && p.status !== "uncertain") o = await prov.meta.refresh("instagram", p.remote_id);
     else if (p.platform === "facebook" && prov.meta) o = await prov.meta.refresh("facebook", p.remote_id);

@@ -14,7 +14,9 @@ export interface PipelineConfig {
       enabled: boolean;
       expectedChannelId: string;
       expectedChannelHandle: string;
-      provider: "auto" | "official" | "buffer";
+      provider: "upload_post" | "auto" | "official" | "buffer";
+      uploadPostProfile: string;
+      uploadPostMonthlyLimit: number;
       apiProjectAudited: boolean;
       uploadPrivateWhenUnaudited: boolean;
       bufferChannelId: string;
@@ -26,7 +28,7 @@ export interface PipelineConfig {
   captions: { provider: "cloudflare_workers_ai"; model: string };
   meta: { graphVersion: string };
   hosting: { presignedUrlTtlSeconds: number };
-  polling: { metaMaxMinutes: number; bufferMaxMinutes: number; youtubeMaxMinutes: number };
+  polling: { metaMaxMinutes: number; bufferMaxMinutes: number; youtubeMaxMinutes: number; uploadPostMaxMinutes: number };
 }
 
 export function loadConfig(path = new URL("../../config/pipeline.json", import.meta.url)): PipelineConfig {
@@ -43,6 +45,7 @@ export const SECRET_NAMES = [
   "META_APP_ID",
   "META_APP_SECRET",
   "BUFFER_API_KEY",
+  "UPLOAD_POST_API_KEY",
   "CLOUDFLARE_AI_TOKEN",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",

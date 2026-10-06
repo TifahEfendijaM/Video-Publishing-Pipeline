@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, statSync, readFileSync } from "node:fs";
+import { mkdtempSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import { probe, renderStory, parseProbe } from "../runner/src/media-tools";
 import { planFeed, planStory, storySegments } from "../src/shared/media";
 import { loadConfig } from "../runner/src/config";
 import { Summary } from "../runner/src/summary";
+import { UploadPost } from "../runner/src/providers/uploadpost";
 
 const ok = async () => ({ allowed: true, reason: null });
 
@@ -115,8 +116,9 @@ describe("buildTasks routing", () => {
   const cfg = loadConfig();
   const horizontal = { durationSec: 8, width: 1280, height: 720, videoCodec: "h264", audioCodec: "aac", audioSampleRate: 48000, fps: 24, sizeBytes: 2e6, container: "mov,mp4", pixFmt: "yuv420p" };
   const vertical = { ...horizontal, width: 1080, height: 1920 };
-  const allOk: Identities = { instagram: { ok: true, detail: "" }, facebook: { ok: true, detail: "" }, tiktok: { ok: true, detail: "" }, youtube: { ok: true, detail: "" }, youtubeBuffer: { ok: true, detail: "" } };
-  const fakeProviders = { meta: {} as any, buffer: {} as any, youtube: {} as any };
+  const allOk: Identities = { instagram: { ok: true, detail: "" }, facebook: { ok: true, detail: "" }, tiktok: { ok: true, detail: "" }, youtube: { ok: true, detail: "" }, youtubeBuffer: { ok: true, detail: "" }, youtubeUploadPost: { ok: true, detail: "" } };
+  const fakeProviders = { meta: {} as any, buffer: {} as any, youtube: {} as any, uploadPost: {} as any };
+  const auto = () => { const c = structuredClone(cfg); c.destinations.youtube.provider = "auto"; return c; };
   const caps = { caption: "x", youtubeTitle: "t", youtubeDescription: "d" };
   const build = (info: any, c = cfg, ids = allOk) =>
     buildTasks({ cfg: c, info, feed: planFeed(info), stories: { plan: planStory(info, c.stories.longVideoPolicy), files: [] }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: ids });
@@ -127,23 +129,32 @@ describe("buildTasks routing", () => {
     expect(t.find((x) => x.platform === "tiktok" && x.surface === "feed")!.provider).toBe("buffer");
   });
 
-  it("YouTube unaudited + not a Short → uploaded PRIVATE for manual publishing (never cropped); or manual if private upload is off", () => {
-    const y = build(horizontal).find((x) => x.platform === "youtube")!;
-    expect(y.provider).toBe("youtube_data_api");
-    expect(y.format).toBe("video");
-    const c = structuredClone(cfg);
+  it("YouTube default: ONE public upload via Upload-Post for Shorts and regular videos alike", () => {
+    const v = build(vertical).find((x) => x.platform === "youtube")!;
+    const h = build(horizontal).find((x) => x.platform === "youtube")!;
+    expect([v.provider, v.format]).toEqual(["upload_post", "short"]);
+    expect([h.provider, h.format]).toEqual(["upload_post", "video"]);
+    expect(build(vertical).filter((x) => x.platform === "youtube")).toHaveLength(1);
+    const ids = { ...allOk, youtubeUploadPost: { ok: false, detail: "profile has no YouTube" } };
+    expect(build(vertical, cfg, ids).find((x) => x.platform === "youtube")!.blocked!.status).toBe("disabled");
+  });
+
+  it("without Upload-Post configured: unaudited non-Short → PRIVATE official upload; or manual if that is off", () => {
+    const noUp = (c: any) => buildTasks({ cfg: c, info: horizontal, feed: planFeed(horizontal), stories: { plan: planStory(horizontal, "segment"), files: [] }, originalPath: "/o.mp4", captions: caps, providers: { ...fakeProviders, uploadPost: undefined }, identities: allOk });
+    expect(noUp(cfg).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
+    const c = auto();
     c.destinations.youtube.uploadPrivateWhenUnaudited = false;
     const m = build(horizontal, c).find((x) => x.platform === "youtube")!;
     expect(m.blocked!.status).toBe("unsupported");
     expect(m.blocked!.detail).toMatch(/Buffer only publishes YouTube Shorts/);
   });
 
-  it("YouTube: Shorts-eligible + Buffer YouTube channel → Buffer (public); audited → official API", () => {
-    const c1 = structuredClone(cfg);
+  it("YouTube (provider auto): Shorts-eligible + Buffer YouTube channel → Buffer; audited → official API", () => {
+    const c1 = auto();
     c1.destinations.youtube.bufferChannelId = "chan";
     expect(build(vertical, c1).find((x) => x.platform === "youtube")!.provider).toBe("buffer");
     expect(build(horizontal, c1).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
-    const c2 = structuredClone(cfg);
+    const c2 = auto();
     c2.destinations.youtube.apiProjectAudited = true;
     expect(build(horizontal, c2).find((x) => x.platform === "youtube")!.provider).toBe("youtube_data_api");
   });
@@ -177,6 +188,65 @@ describe("buildTasks routing", () => {
     const t = buildTasks({ cfg, info, feed: planFeed(info), stories: { plan, files }, originalPath: "/o.mp4", captions: caps, providers: fakeProviders, identities: allOk });
     expect(t.filter((x) => x.platform === "instagram" && x.format === "story").map((x) => x.surface)).toEqual(["story_part_1", "story_part_2"]);
     expect(t.filter((x) => x.platform === "facebook" && x.format === "story").map((x) => x.surface)).toEqual(["story_part_1", "story_part_2"]);
+  });
+});
+
+describe("Upload-Post adapter", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ebv-up-"));
+  const file = join(dir, "v.mp4");
+  writeFileSync(file, Buffer.alloc(1024));
+  const ok = async () => ({ allowed: true, reason: null });
+
+  it("sends our own request ID and confirms via the status endpoint", async () => {
+    const calls: { url: string; headers: any }[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: any) => {
+      calls.push({ url, headers: init?.headers });
+      if (url.endsWith("/api/upload")) return new Response(JSON.stringify({ success: true }), { status: 200 });
+      return new Response(JSON.stringify({ status: "completed", results: [{ platform: "youtube", url: "https://youtube.com/shorts/abc", video_id: "abc" }] }), { status: 200 });
+    }) as any;
+    try {
+      const up = new UploadPost("key", "easybosnian", 1);
+      const o = await up.upload(file, { title: "t", description: "d", categoryId: "27", madeForKids: false }, ok, async () => {});
+      expect(o).toMatchObject({ status: "confirmed", url: "https://youtube.com/shorts/abc" });
+      const reqId = calls[0].headers["X-Request-Id"];
+      expect(reqId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(calls[0].headers["Idempotency-Key"]).toBe(reqId);
+      expect(calls[1].url).toContain(`request_id=${reqId}`);
+      expect(calls.filter((c) => c.url.endsWith("/api/upload"))).toHaveLength(1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it("a lost upload response is never re-sent: it is looked up by request ID, else 'uncertain'", async () => {
+    let uploads = 0;
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      if (url.endsWith("/api/upload")) {
+        uploads++;
+        throw new Error("socket hang up");
+      }
+      return new Response(JSON.stringify({ status: "pending" }), { status: 200 });
+    }) as any;
+    try {
+      const up = new UploadPost("key", "easybosnian", 0);
+      await expect(up.upload(file, { title: "t", description: "d", categoryId: "27", madeForKids: false }, ok, async () => {})).rejects.toBeInstanceOf(AmbiguousOutcome);
+      expect(uploads).toBe(1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  }, 120_000);
+
+  it("a refused upload (e.g. free monthly limit) is a safe failure", async () => {
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("monthly upload limit reached", { status: 429 })) as any;
+    try {
+      const up = new UploadPost("key", "easybosnian", 0);
+      await expect(up.upload(file, { title: "t", description: "d", categoryId: "27", madeForKids: false }, ok, async () => {})).rejects.toThrow(/free plan monthly limit/);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 });
 
