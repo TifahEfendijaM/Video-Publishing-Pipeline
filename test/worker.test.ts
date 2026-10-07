@@ -342,9 +342,9 @@ describe("outros", () => {
     const e = env();
     const v0 = (await getSettings(e.DB)).configVersion;
     await setOutros(e.DB, { youtube: { fileId: "1Edf0K75AQEhJOLWsWYYY61C96B_HrojG", fileName: "outro_yt.mp4" }, tiktok: { fileId: "1p6_I1DeHCe2fKSSdDo3F69aqDiwUrmak", fileName: "outro_tt.mp4" } }, "t", NOW);
-    await setOutros(e.DB, { tiktok: null }, "t", NOW); // remove TikTok, YouTube unchanged
+    await setOutros(e.DB, { tiktok: null }, "t", NOW); // switch TikTok off explicitly, YouTube unchanged
     const s = await getSettings(e.DB);
-    expect(s.outros).toEqual({ youtube: { fileId: "1Edf0K75AQEhJOLWsWYYY61C96B_HrojG", fileName: "outro_yt.mp4" } });
+    expect(s.outros).toEqual({ youtube: { fileId: "1Edf0K75AQEhJOLWsWYYY61C96B_HrojG", fileName: "outro_yt.mp4" }, tiktok: null });
     expect(s.configVersion).toBe(v0);
     await expect(setOutros(e.DB, { snapchat: null } as any, "t", NOW)).rejects.toThrow(/unknown outro platform/);
   });

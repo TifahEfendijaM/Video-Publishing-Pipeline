@@ -22,6 +22,8 @@ export interface PipelineConfig {
     };
   };
   stories: { longVideoPolicy: "skip" | "segment" };
+  /** Outro used for a platform that has no saved outro choice (exact filename in the folder; "" = no default). */
+  outros: { defaultFileName: string };
   captions: { provider: "cloudflare_workers_ai"; model: string };
   meta: { graphVersion: string };
   hosting: { presignedUrlTtlSeconds: number };

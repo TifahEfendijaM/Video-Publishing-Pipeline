@@ -19,7 +19,10 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 
 - Enter the full filename (with extension) of a clip in the Drive folder to make it that platform's outro.
   It is saved and used for every later run (manual and scheduled) until you change it.
-- **Empty = no change.** Type `none` to remove that platform's outro.
+- **Empty = no change.** Type `none` to switch that platform's outro off.
+- **Default outro:** a platform with no saved choice uses the clip named exactly `outro` in the folder
+  (`outros.defaultFileName` in `config/pipeline.json`). This applies to scheduled and manual runs alike;
+  a clip entered in the form overrides it, and `none` turns it off for that platform.
 - The outro is appended to the end of the main post (YouTube video and Short, TikTok video, Instagram Reel,
   Facebook video). Stories are posted without outros. The joined file keeps the main video's frame size;
   an outro of a different shape is fitted inside it with black bars, and a silent clip gets silence.

@@ -137,3 +137,17 @@ export function selectVideo(input: SelectionInput): SelectionResult {
 }
 
 export const NO_ELIGIBLE_MESSAGE = "No eligible videos available.";
+
+export type SavedOutro = { fileId: string; fileName: string } | null | undefined;
+
+/**
+ * Which outro clip applies to a platform: an explicitly saved clip; none if it was explicitly removed (null);
+ * otherwise the default clip (matched by exact filename in the folder, only if exactly one file matches).
+ */
+export function effectiveOutro(saved: SavedOutro, videos: FolderVideo[], defaultFileName: string): { fileId: string; fileName: string; source: "saved" | "default" } | null {
+  if (saved === null) return null;
+  if (saved) return { ...saved, source: "saved" };
+  if (!defaultFileName) return null;
+  const r = resolveCustomName(defaultFileName, videos);
+  return r.kind === "match" ? { fileId: r.video.id, fileName: r.video.name, source: "default" } : null;
+}

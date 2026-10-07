@@ -10,7 +10,7 @@ import { StateClient } from "./state-client";
 import { Drive, DRIVE_SCOPES, serviceAccountEmail, serviceAccountToken, oauthAccessToken, syncEntryTimes } from "./google";
 import { probe, renderStory, renderCanvas, renderWidescreen, concatWithOutro } from "./media-tools";
 import type { MediaInfo } from "../../src/shared/media";
-import { resolveCustomName } from "../../src/shared/selection";
+import { resolveCustomName, effectiveOutro } from "../../src/shared/selection";
 import { makeCaptions } from "./captioner";
 import { KvHosting, R2Hosting } from "./hosting";
 import { statSync } from "node:fs";
@@ -126,7 +126,7 @@ function settingsRows(s: any, next: any[]): [string, string][] {
     ["Saved weekly schedule (Europe/Sarajevo)", `${s.scheduleText}${s.scheduleIsDefault ? " (initial default)" : ""}`],
     ["Saved selection policy", s.selectionPolicy.toUpperCase()],
     ["Pending one-time custom video", s.pendingCustom ? `${s.pendingCustom.fileName ?? ""} (${s.pendingCustom.fileId})` : "none"],
-    ["Outros", ["youtube", "tiktok", "instagram", "facebook"].map((p) => `${p}: ${s.outros?.[p]?.fileName ?? "none"}`).join("\n")],
+    ["Outros", ["youtube", "tiktok", "instagram", "facebook"].map((p) => `${p}: ${s.outros?.[p] === null ? "none (switched off)" : s.outros?.[p]?.fileName ?? (cfg.outros?.defaultFileName ? `default (${cfg.outros.defaultFileName})` : "none")}`).join("\n")],
     ["Live publishing kill switch", s.publishingEnabled ? "ON (live publishing allowed)" : "OFF (nothing will be published)"],
     ["Next scheduled occurrences", s.automationEnabled ? next.map((o) => o.local).join("\n") || "none" : "none (automation disabled)"],
   ];
@@ -152,8 +152,11 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   const s = o.summary;
   const d = await drive();
   const folder = await folderState(d, o.state);
-  const outros: Record<string, { fileId: string; fileName: string }> = (await o.state.state()).settings.outros ?? {};
-  const excludeIds = new Set(Object.values(outros).map((x) => x.fileId));
+  const savedOutros: Record<string, { fileId: string; fileName: string } | null> = (await o.state.state()).settings.outros ?? {};
+  const outros = Object.fromEntries(
+    (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
+  );
+  const excludeIds = new Set(Object.values(outros).flatMap((x) => (x ? [x.fileId] : [])));
   let sel;
   if (o.forcedFileId) {
     const v = folder.videos.find((x) => x.id === o.forcedFileId);
