@@ -144,6 +144,8 @@ interface PublishOpts {
   forcedFileId?: string;
   filter?: Set<string>;
   preview?: boolean;
+  /** manual_now outro choices for this run only (platform -> clip, or null = no outro); not saved */
+  outroOverrides?: Record<string, { fileId: string; fileName: string } | null>;
   summary: Summary;
   state: StateClient;
 }
@@ -154,7 +156,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   const folder = await folderState(d, o.state);
   const savedOutros: Record<string, { fileId: string; fileName: string } | null> = (await o.state.state()).settings.outros ?? {};
   const outros = Object.fromEntries(
-    (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
+    (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(o.outroOverrides && p in o.outroOverrides ? o.outroOverrides[p] : savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
   );
   const excludeIds = new Set(Object.values(outros).flatMap((x) => (x ? [x.fileId] : [])));
   let sel;
@@ -360,10 +362,14 @@ async function cmdConfigure() {
   const actor = env("GITHUB_ACTOR") || "github";
   if (!["manual_now", "automated"].includes(mode)) throw new Error("run_mode must be manual_now or automated");
   const outroInputs = { youtube: process.env.OUTRO_YOUTUBE ?? "", tiktok: process.env.OUTRO_TIKTOK ?? "", instagram: process.env.OUTRO_INSTAGRAM ?? "", facebook: process.env.OUTRO_FACEBOOK ?? "" };
-  /** Resolve the outro fields: empty = unchanged, "none" = remove, filename = set (if it matches exactly one file). */
-  const applyOutros = async (): Promise<string[]> => {
+  /**
+   * Resolve the outro fields: empty = unchanged, "none" = off, filename = that clip (if exactly one file matches).
+   * save = true (automated): stored for all later runs. save = false (manual_now): applies to this run only.
+   */
+  const applyOutros = async (save: boolean): Promise<{ notes: string[]; changes: Record<string, { fileId: string; fileName: string } | null> }> => {
     const entries = Object.entries(outroInputs).filter(([, v]) => v.trim() !== "");
-    if (!entries.length) return [];
+    if (!entries.length) return { notes: [], changes: {} };
+    const verb = save ? "saved" : "for this video only";
     const notes: string[] = [];
     const changes: Record<string, { fileId: string; fileName: string } | null> = {};
     let videos: FolderVideo[] | null = null;
@@ -371,19 +377,19 @@ async function cmdConfigure() {
       const val = raw.trim();
       if (/^(none|remove|-)$/i.test(val)) {
         changes[plat] = null;
-        notes.push(`${plat} outro removed.`);
+        notes.push(`${plat} outro switched off (${verb}).`);
         continue;
       }
       videos ??= await (await drive()).listVideos(); // auth/network errors abort; never treated as "not found"
       const r = resolveCustomName(val, videos);
       if (r.kind === "match") {
         changes[plat] = { fileId: r.video.id, fileName: r.video.name };
-        notes.push(`${plat} outro set to ${r.video.name}.`);
+        notes.push(`${plat} outro: ${r.video.name} (${verb}).`);
       } else if (r.kind === "ambiguous") notes.push(`${plat} outro unchanged: ${r.count} files are named "${r.name}".`);
       else notes.push(`${plat} outro unchanged: no video named "${val}" in the folder.`);
     }
-    if (Object.keys(changes).length) await state.setOutros(changes, actor);
-    return notes;
+    if (save && Object.keys(changes).length) await state.setOutros(changes, actor);
+    return { notes, changes };
   };
   if (!["fifo", "lifo", "custom"].includes(selection)) throw new Error("video_selection must be fifo, lifo or custom");
   const policyChoice = selection === "custom" ? null : (selection as SelectionPolicy);
@@ -395,7 +401,7 @@ async function cmdConfigure() {
     if (selection !== "custom" && customName.trim()) ignored.push("custom_video_name (only used when video_selection = custom)");
     // 1) disable automation FIRST (retaining the saved schedule), 2) select, 3) publish now.
     const cfgView = await state.configureManual({ selectionPolicy: policyChoice, actor });
-    const outroNotes = await applyOutros();
+    const { notes: outroNotes, changes: outroOverrides } = await applyOutros(false);
     const begin = await state.beginRun({ origin: "manual", githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
     s.kv([
       ["Origin", "manual (manual_now)"],
@@ -412,6 +418,7 @@ async function cmdConfigure() {
         origin: "manual",
         policy: cfgView.settings.selectionPolicy,
         customName: selection === "custom" ? customName : null,
+        outroOverrides,
         summary: s,
         state,
       });
@@ -453,7 +460,7 @@ async function cmdConfigure() {
       else if (r.kind === "ambiguous") notes.push(`${r.count} videos are named "${r.name}": ambiguous, so the saved FIFO/LIFO policy will be used.`);
     }
   } else if (customName.trim()) notes.push("custom_video_name ignored because video_selection is not custom.");
-  notes.push(...(await applyOutros()));
+  notes.push(...(await applyOutros(true)).notes);
   const view = await state.configureAutomated({ scheduleText: normalized, selectionPolicy: policyChoice, pendingCustom: pending, actor });
   s.kv([
     ["Origin", "manual configuration (automated)"],
