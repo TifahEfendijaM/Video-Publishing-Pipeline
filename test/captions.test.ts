@@ -51,14 +51,13 @@ describe("filename analysis", () => {
 
 describe("caption validation", () => {
   const good = {
-    caption: `Kafa u Sarajevu je pravi mali ritual. ☕\nNauči kako naručiti kafu kao domaći – uz EasyBosnian ćeš se snaći za šankom za čas!\n${WEBSITE_ENDING}`,
-    youtubeTitle: "Kako naručiti kafu na bosanskom",
-    youtubeDescription: `Kratki video o naručivanju kafe.\n\nUči bosanski uz EasyBosnian: easybosnian.com`,
+    caption: `Coffee in Sarajevo is a little ritual. ☕ Ready to order „kafa“ like a local?\nLearn Bosnian with EasyBosnian and you'll feel at home at any café counter!\n${WEBSITE_ENDING}`,
+    youtubeTitle: "How to order coffee in Bosnian",
+    youtubeDescription: `A short video about ordering coffee in Bosnia.\n\nLearn Bosnian with EasyBosnian: easybosnian.com`,
   };
 
-  it("accepts a valid set and preserves diacritics", () => {
+  it("accepts a valid English set", () => {
     expect(validateCaptionSet(good)).toEqual([]);
-    expect(good.caption).toMatch(/[čćšžđ]/);
   });
 
   it("requires the exact website ending", () => {
@@ -70,6 +69,7 @@ describe("caption validation", () => {
     expect(validateCaptionSet({ ...good, caption: `Lekcija za nivo A2.\n${WEBSITE_ENDING}` }).join()).toMatch(/CEFR/);
     expect(validateCaptionSet({ ...good, caption: `Mala ispravka prethodnog videa.\n${WEBSITE_ENDING}` }).join()).toMatch(/mala ispravka/);
     expect(validateCaptionSet({ ...good, caption: `Ovaj video je ponovo objavljen.\n${WEBSITE_ENDING}` }).join()).toMatch(/deleted/);
+    expect(validateCaptionSet({ ...good, caption: `Small correction to our earlier version.\n${WEBSITE_ENDING}` }).join()).toMatch(/correction|earlier/);
     expect(validateCaptionSet({ ...good, caption: `Pogledaj evil.com\n${WEBSITE_ENDING}` }).join()).toMatch(/link other/);
     expect(validateCaptionSet({ ...good, caption: `UÄiÅ¡ bosanski\n${WEBSITE_ENDING}` }).join()).toMatch(/mojibake/);
   });
@@ -85,9 +85,10 @@ describe("caption validation", () => {
     expect(validateCaptionSet({ ...good, caption: `${tags}\n${WEBSITE_ENDING}` }).join()).toMatch(/hashtags/);
   });
 
-  it("the stored generic fallback caption is itself valid Bosnian with diacritics and the exact ending", () => {
+  it("the stored generic fallback caption is valid English with the exact ending", () => {
     expect(validateCaptionSet(generic)).toEqual([]);
     expect(generic.caption.endsWith(WEBSITE_ENDING)).toBe(true);
-    for (const ch of ["č", "ć", "š", "ž"]) expect(generic.caption + generic.youtubeDescription).toContain(ch);
+    expect(generic.caption).toMatch(/\bBosnian\b/);
+    expect(generic.youtubeTitle).toMatch(/^Learn Bosnian/);
   });
 });

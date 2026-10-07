@@ -103,6 +103,8 @@ export interface CaptionSet {
 const CEFR = /\b(A1|A2|B1|B2|C1|C2)\b/;
 const FORBIDDEN: [RegExp, string][] = [
   [/mala ispravka/i, 'mentions "mala ispravka"'],
+  [/\b(small correction|quick correction|correction:|erratum)\b/i, "mentions a correction"],
+  [/\b(deleted|re-?posted|re-?uploaded|earlier version|previous version|old version)\b/i, "references deleted/earlier posts or versions"],
   [/\b(obrisan\w*|izbrisan\w*|ponovo objavljen\w*|ranij\w* verzij\w*|prethodn\w* verzij\w*)\b/i, "references deleted/earlier posts or versions"],
   [/\b(pipeline|automatizacij\w*|automatsk\w* objav\w*|github|cloudflare|drive|api)\b/i, "references internal pipeline operations"],
   [/Ã|Ä|Å¡|Å¾|Ä‡|Ä/, "contains broken (mojibake) characters"],

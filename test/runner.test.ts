@@ -157,7 +157,9 @@ describe("buildTasks routing", () => {
   });
 
   it("missing routes are reported, never silently skipped; Upload-Post absent → private official fallback", () => {
-    const yt = withYt(horizontal, cfg, allOk, { ...fakeProviders, uploadPost: undefined }).filter((x) => x.platform === "youtube");
+    const noBuffer = structuredClone(cfg);
+    noBuffer.destinations.youtube.short.bufferChannelId = "";
+    const yt = withYt(horizontal, noBuffer, allOk, { ...fakeProviders, uploadPost: undefined }).filter((x) => x.platform === "youtube");
     expect(yt[0].blocked!.detail).toMatch(/No YouTube channel connected in Buffer/);
     expect(yt[1].provider).toBe("youtube_data_api");
     const ids = { ...allOk, youtubeUploadPost: { ok: false, detail: "no YouTube on profile" } };
@@ -294,10 +296,10 @@ describe("secret redaction", () => {
 
 describe("captions (free Cloudflare Workers AI model, injectable for tests)", () => {
   const good = {
-    topic_caption: "Naručiti kafu u Sarajevu je pravi mali ritual. ☕",
-    website_invitation: "Uz EasyBosnian ćeš i za šankom zvučati kao domaći!",
-    youtube_title: "Kako naručiti kafu na bosanskom",
-    youtube_description: "Kratko o tome kako se naručuje kafa. Uči bosanski uz EasyBosnian.",
+    topic_caption: "Ordering coffee in Sarajevo is a little ritual of its own. ☕ Ready to say „jednu kafu, molim“ like a local?",
+    website_invitation: "Learn your Bosnian with EasyBosnian and you'll never be lost at the café counter again!",
+    youtube_title: "How to order coffee in Bosnian",
+    youtube_description: "A short look at ordering coffee in Bosnia. Learn Bosnian step by step with EasyBosnian and make every café visit a little easier.",
   };
 
   it("meaningless filenames use the stored generic caption with no model call", async () => {
@@ -306,7 +308,7 @@ describe("captions (free Cloudflare Workers AI model, injectable for tests)", ()
     expect(r.source).toBe("generic");
     expect(called).toBe(false);
     expect(r.caption.endsWith("👉easybosnian.com")).toBe(true);
-    expect(r.caption).toContain("Želiš");
+    expect(r.caption).toContain("Ready to finally start speaking Bosnian");
   });
 
   it("meaningful filename without a configured model falls back to generic and says so", async () => {
@@ -321,20 +323,20 @@ describe("captions (free Cloudflare Workers AI model, injectable for tests)", ()
     const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m", run: async (_s, u) => ((prompt = u), good) });
     expect(r.source).toBe("generated");
     expect(r.caption).toBe(`${good.topic_caption}\n${good.website_invitation}\n👉easybosnian.com`);
-    expect(r.caption).toMatch(/[čćšž]/);
+    expect(r.caption).toContain("jednu kafu, molim"); // Bosnian phrase kept with correct spelling inside English text
     expect(prompt).toContain('"kako naruciti kafu"'); // filename passed as quoted data
   });
 
-  it("rejects bad output (no diacritics, CEFR, English, Cyrillic, foreign link) and retries once, then falls back", async () => {
+  it("rejects bad output (not English, CEFR, foreign link) and retries once, then falls back", async () => {
     const bad = [
-      { ...good, topic_caption: "Nauci kako naruciti kafu.", website_invitation: "Uci bosanski uz EasyBosnian.", youtube_description: "Kafa. Uci bosanski." },
+      { ...good, topic_caption: "Nauči kako naručiti kafu.", website_invitation: "Uči bosanski uz EasyBosnian.", youtube_description: "Kafa. Uči bosanski." },
       { ...good, topic_caption: "Lekcija za nivo A2: learn with us at evil.com" },
     ];
     let n = 0;
     const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m", run: async () => bad[n++] });
     expect(n).toBe(2);
     expect(r.source).toBe("generic");
-    expect(r.notes.join(" ")).toMatch(/diacritics/);
+    expect(r.notes.join(" ")).toMatch(/does not read as English/);
     expect(r.notes.join(" ")).toMatch(/CEFR/);
     expect(r.notes.join(" ")).toMatch(/safe fallback/);
   });

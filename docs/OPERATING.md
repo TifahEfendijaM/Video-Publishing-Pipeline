@@ -100,17 +100,19 @@ Every file in Google Drive has a permanent ID (the long code in its link, e.g.
 this ID, so a renamed or replaced-in-place file counts as the **same** video and is not republished
 automatically; a newly uploaded file counts as new. Use `custom` to republish deliberately.
 
-## Captions
+## Captions (English)
+
+All captions, YouTube titles and descriptions are written in **English** (for English speakers learning
+Bosnian). A Bosnian word or phrase from the topic may appear, spelled with correct diacritics.
 
 - Filenames made of IDs, numbers, dates or generic camera/export/AI-tool labels (e.g.
   `gemini_generated_video_0A28F2A0.mp4`, `178904548924381.mp4`, `Made with Veo 3.mp4`) get the reviewed
-  generic caption in `config/generic-caption.json` — no topic is invented.
-- Meaningful filenames (e.g. `kako_naruciti_kafu.mp4`) get a topic caption written by a free Cloudflare
-  Workers AI model (Llama 3.3 70B) from the filename hint only (treated as data). Free models write Bosnian
-  less reliably than paid ones, so the output is also rejected if it lacks diacritics, uses Cyrillic or English, and it is validated for Bosnian diacritics, banned content (CEFR levels,
-  "mala ispravka", references to earlier/deleted posts or internal tooling, foreign links) and each
-  platform's limits, and always ending with `👉easybosnian.com`. Any failure → generic caption, reported.
-  Text is never truncated.
+  generic English caption in `config/generic-caption.json` — no topic is invented. Edit that file to change it.
+- Meaningful filenames (e.g. `na vrh brda vrba mrda.mp4`) get a topic caption written by a free Cloudflare
+  Workers AI model (Llama 3.3 70B) from the filename hint only (treated as data). The output is rejected if it
+  does not read as English or uses Cyrillic, and is validated for banned content (CEFR levels, corrections,
+  references to earlier/deleted posts or internal tooling, foreign links) and each platform's limits, always
+  ending with `👉easybosnian.com`. Any failure → generic caption, reported. Text is never truncated.
 
 ## Stories
 
