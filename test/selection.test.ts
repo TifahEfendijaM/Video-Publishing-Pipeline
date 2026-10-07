@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderVideos, rankable, resolveCustomName, selectVideo, type FolderVideo, type VideoRecord } from "../src/shared/selection";
+import { effectiveOutro, orderVideos, rankable, resolveCustomName, selectVideo, type FolderVideo, type VideoRecord } from "../src/shared/selection";
 
 const v = (id: string, name: string, created: string): FolderVideo => ({
   id,
@@ -127,5 +127,16 @@ describe("outro clips", () => {
     expect(r.eligibleCount).toBe(3);
     expect(r.notes.join()).toMatch(/2 outro clip/);
     expect(selectVideo({ policy: "fifo", customName: "special_end_clip.mp4", videos: vids, records: new Map(), excludeIds: new Set(["idX"]) }).video!.id).toBe("idX");
+  });
+});
+
+describe("default outro", () => {
+  const vids = [v("idO", "outro", "2026-10-07T10:34:44Z"), v("idT", "outro tiktok", "2026-10-07T10:35:00Z"), ...videos];
+  it("uses the saved clip, else the default 'outro' clip; an explicit 'none' wins over the default", () => {
+    expect(effectiveOutro(undefined, vids, "outro")).toEqual({ fileId: "idO", fileName: "outro", source: "default" });
+    expect(effectiveOutro({ fileId: "idT", fileName: "outro tiktok" }, vids, "outro")!.fileId).toBe("idT");
+    expect(effectiveOutro(null, vids, "outro")).toBeNull();
+    expect(effectiveOutro(undefined, videos, "outro")).toBeNull(); // default clip missing → no outro
+    expect(effectiveOutro(undefined, vids, "")).toBeNull();
   });
 });

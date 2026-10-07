@@ -66,5 +66,8 @@
     "bufferMaxMinutes": 20,
     "youtubeMaxMinutes": 20,
     "uploadPostMaxMinutes": 20
+  },
+  "outros": {
+    "defaultFileName": "outro"
   }
 }
