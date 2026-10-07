@@ -8,7 +8,7 @@
     "instagram": {
       "enabled": true,
       "provider": "meta_graph",
-      "expectedUserId": "",
+      "expectedUserId": "17841429077454658",
       "expectedUsername": "easy_bosnian",
       "reel": true,
       "story": true
@@ -16,7 +16,7 @@
     "facebook": {
       "enabled": true,
       "provider": "meta_graph",
-      "expectedPageId": "",
+      "expectedPageId": "1284422991426579",
       "expectedPageName": "Easy Bosnian",
       "story": true
     },
