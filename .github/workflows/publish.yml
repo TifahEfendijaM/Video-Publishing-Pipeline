@@ -25,19 +25,19 @@ on:
         type: string
         required: false
       outro_youtube:
-        description: "Outro for YouTube (both the video and the Short): full filename of a clip in the Drive folder. Empty = keep the current outro (default: the clip named outro). Type none to switch it off."
+        description: "Outro for YouTube (both the video and the Short): full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for all scheduled posts. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
       outro_tiktok:
-        description: "Outro for TikTok: full filename of a clip in the Drive folder. Empty = keep the current outro (default: the clip named outro). Type none to switch it off."
+        description: "Outro for TikTok: full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for all scheduled posts. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
       outro_instagram:
-        description: "Outro for the Instagram Reel: full filename of a clip in the Drive folder. Empty = keep the current outro (default: the clip named outro). Type none to switch it off."
+        description: "Outro for the Instagram Reel: full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for all scheduled posts. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
       outro_facebook:
-        description: "Outro for the Facebook video: full filename of a clip in the Drive folder. Empty = keep the current outro (default: the clip named outro). Type none to switch it off."
+        description: "Outro for the Facebook video: full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for all scheduled posts. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
 

@@ -17,8 +17,9 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 
 ### Outro fields (`outro_youtube`, `outro_tiktok`, `outro_instagram`, `outro_facebook`)
 
-- Enter the full filename (with extension) of a clip in the Drive folder to make it that platform's outro.
-  It is saved and used for every later run (manual and scheduled) until you change it.
+- Enter the exact filename of a clip in the Drive folder (as Drive shows it) to choose that platform's outro.
+- **With `automated`** the choice is **saved** and used for every later post until you change it.
+- **With `manual_now`** the choice applies to **that one video only**; later posts go back to the saved outro.
 - **Empty = no change.** Type `none` to switch that platform's outro off.
 - **Default outro:** a platform with no saved choice uses the clip named exactly `outro` in the folder
   (`outros.defaultFileName` in `config/pipeline.json`). This applies to scheduled and manual runs alike;
