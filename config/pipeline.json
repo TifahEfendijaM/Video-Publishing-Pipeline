@@ -23,7 +23,7 @@
     "tiktok": {
       "enabled": true,
       "provider": "buffer",
-      "expectedBufferChannelId": "",
+      "expectedBufferChannelId": "6ac0487cea19ca0bde5cac4c",
       "expectedUsername": "easy.bosnian",
       "story": "unsupported"
     },
@@ -36,7 +36,7 @@
       "short": {
         "enabled": true,
         "provider": "buffer",
-        "bufferChannelId": ""
+        "bufferChannelId": "6ac598c16a5c39ccb6392a9e"
       },
       "regular": {
         "enabled": true,
