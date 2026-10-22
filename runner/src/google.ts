@@ -98,7 +98,7 @@ export async function oauthAccessToken(c: OAuthClient): Promise<{ accessToken: s
 // ---------------------------------------------------------------------------
 // Drive
 
-export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.activity.readonly"];
+export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/drive.activity.readonly"];
 
 export class Drive {
   constructor(private token: string, private folderId: string) {}
@@ -199,6 +199,21 @@ export class Drive {
     });
     if (!res.ok || !res.body) throw new HttpStatusError(res.status, "download failed", "drive download");
     await pipeline(Readable.fromWeb(res.body as any), createWriteStream(dest));
+  }
+
+  async canTrash(fileId: string): Promise<boolean> {
+    const f = await json<any>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=capabilities(canTrash)&supportsAllDrives=true`, { label: "drive cleanup permissions", headers: this.h() });
+    return f.capabilities?.canTrash === true;
+  }
+
+  /** Remove only a source still in our folder. Trash is recoverable; never permanently delete. */
+  async trash(fileId: string): Promise<void> {
+    if (!await this.stillInFolder(fileId)) return;
+    if (!await this.canTrash(fileId)) throw new Error("Drive identity cannot trash this source. Configure GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_REFRESH_TOKEN for the file owner (drive scope); Viewer/Editor sharing of a My Drive file is insufficient.");
+    const f = await json<any>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,trashed&supportsAllDrives=true`, {
+      label: "drive trash confirmed source", method: "PATCH", headers: { ...this.h(), "content-type": "application/json" }, body: JSON.stringify({ trashed: true }),
+    });
+    if (f.trashed !== true || await this.stillInFolder(fileId)) throw new Error("Drive did not confirm removal of the source; recovery checkpoints retained");
   }
 }
 

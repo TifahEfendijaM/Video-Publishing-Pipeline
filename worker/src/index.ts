@@ -7,6 +7,7 @@ import {
   configureManual,
   consumeCustom,
   consumeVideo,
+  completeVideo,
   dispatchTest,
   finishRun,
   getCredential,
@@ -103,6 +104,8 @@ export async function route(req: Request, env: Env): Promise<Response> {
       return json(await observeVideos(db, b.items, now));
     case "/api/videos/consume":
       return json(await consumeVideo(db, b, now));
+    case "/api/videos/complete":
+      return json(await completeVideo(db, String(b.fileId ?? "")));
     case "/api/publications/upsert":
       return json(await upsertPublication(db, b, now));
     case "/api/credentials/get":

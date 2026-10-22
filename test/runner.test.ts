@@ -22,6 +22,27 @@ function task(platform: any, surface: string, run: Task["run"], extra: Partial<T
 }
 
 describe("executeTasks", () => {
+  it("saves the complete plan and an initiated checkpoint before the first provider request", async () => {
+    const saved: any[] = [];
+    const first = task("instagram", "feed", async () => {
+      expect(saved.filter((r) => r.status === "disabled").map((r) => r.platform)).toEqual(["instagram", "facebook"]);
+      expect(saved.at(-1)).toMatchObject({ platform: "instagram", status: "initiated" });
+      return { status: "confirmed" };
+    });
+    await executeTasks("r", "f", [first, task("facebook", "feed", async () => ({ status: "confirmed" }))], { mayPublish: ok, record: async (r) => { saved.push(r); } });
+  });
+
+  it("does not send provider requests if durable checkpoints cannot be written", async () => {
+    const run = vi.fn(async () => ({ status: "confirmed" as const }));
+    for (const failureAt of [1, 2]) {
+      let n = 0;
+      await expect(executeTasks("r", "f", [task("instagram", "feed", run)], { mayPublish: ok, record: async () => {
+        if (++n === failureAt) throw new Error("state down");
+      } })).rejects.toThrow(/state down/);
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("attempts every destination independently; one failure does not stop others", async () => {
     const record = vi.fn(async () => {});
     const tasks = [

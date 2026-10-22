@@ -86,6 +86,7 @@ export interface SelectionInput {
   videos: FolderVideo[]; // successful listing of the folder (videos only)
   records: Map<string, VideoRecord>;
   excludeIds?: Set<string>; // configured outro clips: never picked by FIFO/LIFO (custom may still pick them)
+  blockedIds?: Set<string>; // temporary pending/partial publications or confirmed files awaiting cleanup
 }
 
 /** Outro clips are excluded from automatic selection: configured outros, and any file whose name contains "outro". */
@@ -103,9 +104,18 @@ export interface SelectionResult {
 
 export function selectVideo(input: SelectionInput): SelectionResult {
   const videos = input.videos.filter(isVideo);
-  const ranked = rankable(videos, input.records);
+  const ranked = rankable(videos.filter((v) => !input.blockedIds?.has(v.id)), input.records);
   const notes: string[] = [];
   let fallback: string | null = null;
+
+  const requested = input.pendingCustomFileId ?? (input.customName ? (() => {
+    const r = resolveCustomName(input.customName, videos);
+    return r.kind === "match" ? r.video.id : null;
+  })() : null);
+  if (requested && input.blockedIds?.has(requested)) {
+    notes.push("The requested video has pending/partial publications or is awaiting Drive cleanup. Use the recovery tools before publishing it again.");
+    return { video: null, method: "custom", fallback: null, notes, eligibleCount: ranked.length };
+  }
 
   if (input.pendingCustomFileId) {
     const v = ranked.find((x) => x.id === input.pendingCustomFileId);
@@ -118,7 +128,6 @@ export function selectVideo(input: SelectionInput): SelectionResult {
     if (r.kind === "match") {
       if (r.note) notes.push(`Custom filename ${r.note}.`);
       const v = ranked.find((x) => x.id === r.video.id)!;
-      if (input.records.get(v.id)?.consumed) notes.push("This video was published by the pipeline before; republishing it was explicitly requested.");
       return { video: v, method: "custom", fallback: null, notes, eligibleCount: ranked.length };
     }
     if (r.kind === "blank") fallback = `Custom selected but the filename was empty; using the saved ${input.policy.toUpperCase()} policy.`;
@@ -128,7 +137,7 @@ export function selectVideo(input: SelectionInput): SelectionResult {
 
   const outros = ranked.filter((v) => input.excludeIds?.has(v.id) || isOutroName(v.name));
   if (outros.length) notes.push(`${outros.length} outro clip(s) excluded from automatic selection: ${outros.map((v) => v.name).join(", ")}.`);
-  const eligible = ranked.filter((v) => !input.records.get(v.id)?.consumed && !outros.includes(v));
+  const eligible = ranked.filter((v) => !outros.includes(v));
   const ordered = orderVideos(eligible, input.policy);
   if (ordered.some((v) => v.entrySource === "created_time_approximation")) {
     notes.push("Some folder-entry times are approximated by Drive createdTime (exact entry time unavailable).");

@@ -37,6 +37,9 @@ export function loadConfig(path = new URL("../../config/pipeline.json", import.m
 export const SECRET_NAMES = [
   "STATE_API_TOKEN",
   "GOOGLE_SERVICE_ACCOUNT_JSON",
+  "GOOGLE_DRIVE_CLIENT_ID",
+  "GOOGLE_DRIVE_CLIENT_SECRET",
+  "GOOGLE_DRIVE_REFRESH_TOKEN",
   "YOUTUBE_CLIENT_ID",
   "YOUTUBE_CLIENT_SECRET",
   "YOUTUBE_REFRESH_TOKEN",

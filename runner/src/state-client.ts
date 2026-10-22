@@ -53,6 +53,9 @@ export class StateClient {
   consumeVideo(b: { fileId: string; runId: string; md5: string | null }) {
     return this.call("POST", "/api/videos/consume", b);
   }
+  completeVideo(fileId: string) {
+    return this.call("POST", "/api/videos/complete", { fileId });
+  }
   upsertPublication(p: { runId: string; fileId: string; platform: string; surface: string; provider?: string; format?: string; status: string; remoteId?: string | null; url?: string | null; detail?: string | null }) {
     return this.call("POST", "/api/publications/upsert", p);
   }

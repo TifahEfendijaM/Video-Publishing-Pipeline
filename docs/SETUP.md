@@ -12,6 +12,7 @@ Do not reuse that project's tokens; create new ones below.
 | # | What | Where | Exact settings | Status |
 |---|---|---|---|---|
 | 1 | **Google service account** (Drive read) | Google Cloud console → new project "easybosnian-video" → IAM → Service accounts → create → Keys → JSON | Enable **Google Drive API** and **Drive Activity API**. Share the Drive folder *EasyBosnian educational videos* with the service-account email as **Viewer** (nothing else is shared; the folder stays private). | ⏳ you |
+| 1b | **Drive owner OAuth** (required for cleanup of user-owned My Drive videos) | Google Cloud console → OAuth client (Web application), with consent screen **In production** | Authorize as the **owner of the video files**, with `https://www.googleapis.com/auth/drive` and `https://www.googleapis.com/auth/drive.activity.readonly`. The owner OAuth identity takes precedence over the service account. Viewer/Editor sharing alone cannot trash someone else's My Drive file. | ⏳ you |
 | 2 | **YouTube OAuth client** — *optional fallback only* (private uploads if Upload-Post is not configured) | Same project → APIs: enable **YouTube Data API v3** → OAuth consent screen (External) → **Publish app → In production** → Credentials → OAuth client (Web application, see below) | Scopes `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly`. Sign in **as the EasyBosnian channel owner**. Unverified-app warning is expected for your own use. | ⏳ you (then I help generate the refresh token) |
 | 3 | **YouTube API compliance audit** — *optional, not needed with Upload-Post* | [YouTube API Services audit form](https://support.google.com/youtube/contact/yt_api_form) | Required for **public** uploads via the official API. Until approved, `apiProjectAudited` stays `false`. | ⏳ optional / weeks |
 | 4 | **Meta app + system user** | developers.facebook.com → Create app (Business) linked to your Business portfolio; business.facebook.com → Users → **System users** → add (Admin) → assign the Easy Bosnian **Page** (full control) and the **@easy_bosnian** Instagram account → Generate token (never expires) | Permissions: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`, `business_management`. Then exchange for the **Page** token: `GET /{page-id}?fields=access_token` with the system-user token. | ⏳ you |
@@ -28,6 +29,26 @@ Do not reuse that project's tokens; create new ones below.
 4. *Exchange authorization code for tokens* → copy the **refresh token** into the `YOUTUBE_REFRESH_TOKEN` secret. Then remove the Playground redirect URI if you like.
 5. Run Tools → `verify`: it must show the expected channel ID and "upload scope granted".
 
+### Drive owner authorization for automatic cleanup
+
+Use the same OAuth Playground procedure above with a Drive OAuth client, entering these scopes:
+`https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.activity.readonly`.
+Sign in as the **owner of the source videos**, then store the client ID, client secret and refresh token
+in the three `GOOGLE_DRIVE_*` GitHub secrets below. Keep these separate from the YouTube credentials.
+Use your own OAuth client and an **In production** consent screen so the refresh token does not expire
+after seven days. Run **Tools → verify** and check **Drive source cleanup permission** before publishing.
+
+The service-account fallback still lists/downloads shared videos; its token now requests `drive` and
+`drive.activity.readonly`. It can clean up only if Drive reports `capabilities.canTrash=true`
+(for example, appropriate access in a shared drive). A service account with Viewer access to user-owned
+My Drive files cannot perform cleanup. Sources are moved to recoverable Trash rather than permanently
+deleted. See [Google's trash permissions](https://developers.google.com/workspace/drive/api/guides/delete).
+
+After merging this update, run **Deploy scheduler Worker** once to add `/api/videos/complete` to the
+existing state API; no new database migration is needed. Then run **Tools → verify**. Existing confirmed
+sources still in the folder will be cleaned up on the next publishing run or **Tools → reconcile**;
+partial/pending sources remain protected. Preview and verify never remove source files.
+
 ## 2. GitHub repository secrets and variables
 
 Settings → Secrets and variables → Actions.
@@ -41,6 +62,7 @@ Settings → Secrets and variables → Actions.
 | `GH_DISPATCH_TOKEN` | fine-grained PAT from step 8 (deploy copies it into the Worker; runners never use it) |
 | `CLOUDFLARE_API_TOKEN` | step 7 API token (deploy workflow only) |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | full JSON key from step 1 |
+| `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN` | step 1b; all three required together for user-owned My Drive source cleanup |
 | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN` | step 2 (optional fallback) |
 | `META_PAGE_ACCESS_TOKEN` | Page token from step 4 |
 | `META_APP_ID`, `META_APP_SECRET` | step 4 app (only used to inspect token scopes in `verify`) |

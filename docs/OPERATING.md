@@ -56,18 +56,31 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 | `preview` | Read-only selection + media/format plan + captions + Story renders (artifact). `target` = optional filename | no |
 | `dispatch_test` | Worker dispatches the scheduled workflow in non-publishing verification mode | no |
 | `publishing_enable` / `publishing_disable` | Global kill switch (checked right before every publication) | — |
-| `reconcile` | Re-reads provider status of processing/uncertain items; never re-sends | no |
-| `resolve_publication` | After you checked manually: mark an uncertain item `confirmed` or `failed` (`target` = publication ID) | no |
-| `retry_failed` | Re-attempts only the destinations that **definitively failed** in a run (`target` = run ID) | yes (only those) |
+| `reconcile` | Re-reads provider status and retries Drive cleanup of confirmed sources; never re-sends | no |
+| `resolve_publication` | After you checked manually: mark an uncertain item `confirmed` or `failed` (`target` = publication ID), then clean up if complete | no |
+| `retry_failed` | Re-attempts only current **failed or skipped/disabled** destinations in a run (`target` = run ID) | yes (only those) |
 
 ## How videos advance, and failures
 
-- A video counts as published once any destination is processing/confirmed/uncertain; FIFO/LIFO then
-  skips it (by Drive file ID — renaming doesn't reset it). Nothing restarts from the beginning: when all
-  are used, the run reports **"No eligible videos available."** and publishes nothing.
+- The live Drive folder is the queue. FIFO/LIFO chooses the oldest/newest remaining source by folder-entry
+  time; custom chooses a filename. The old permanent `consumed` flag is ignored.
+- After every supported destination confirms publication, the source goes to **Drive Trash**, and its
+  temporary publication checkpoints and folder-entry record are cleared. Unsupported/manual-only surfaces
+  (such as TikTok Stories) do not block cleanup; there must be at least one confirmed publication.
+  Outro clips (by name or saved/configured ID) are retained.
+- Processing, uncertain, failed or skipped destinations prevent cleanup. If any destination may already be
+  live, its source is temporarily excluded from automatic **and custom** publication to prevent duplicates.
+  Other queued videos can advance. Recovery tools use per-destination checkpoints, rather than a permanent
+  publishing-history cursor. Recent run summaries remain available for troubleshooting.
+- Cleanup failure is reported in the summary. The confirmed video cannot be re-uploaded accidentally;
+  cleanup is retried before the next publishing run or via **Tools → reconcile**, even if there are no open
+  publications. Reconcile and manual resolution also clean up sources whose last pending destination confirms.
+- When no eligible source remains, the run reports **"No eligible videos available."** and publishes nothing.
 - Every destination is attempted independently. Facebook failing doesn't stop Instagram, TikTok or YouTube.
 - **Failed** means nothing was published there; `retry_failed` re-attempts only those, never the ones
-  that succeeded. **Uncertain** (e.g. a response lost after the publish request) is never retried
+  that succeeded. Skipped/disabled destinations can also be explicitly retried after fixing their configuration.
+  A retry targeting an old run will not resend a destination that succeeded in a later retry.
+  **Uncertain** (e.g. a response lost after the publish request) is never retried
   automatically: check the account, then `resolve_publication`.
 - Scheduled runs that were queued before you changed settings (or chose `manual_now`) detect it and stop
   without publishing. The kill switch is re-checked immediately before each live publication step.
@@ -101,8 +114,9 @@ Upload-Post's free plan (10/month) is used only for the regular video.
 Every file in Google Drive has a permanent ID (the long code in its link, e.g.
 `…/file/d/1p6_I1DeHCe2fKSSdDo3F69aqDiwUrmak/view`). Renaming a file, or uploading a new version via
 "Manage versions", keeps the ID; uploading a separate copy creates a new ID. The pipeline tracks videos by
-this ID, so a renamed or replaced-in-place file counts as the **same** video and is not republished
-automatically; a newly uploaded file counts as new. Use `custom` to republish deliberately.
+this ID while publication or cleanup is pending; renaming or replacing content does not bypass those
+recovery checkpoints. Once the confirmed source is removed and checkpoints are cleared, a newly uploaded
+copy (or a source deliberately restored to the folder) is eligible again according to FIFO/LIFO/custom.
 
 ## Captions (English)
 

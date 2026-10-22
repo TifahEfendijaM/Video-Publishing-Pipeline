@@ -10,6 +10,9 @@ import {
   handleScheduled,
   mayPublish,
   observeVideos,
+  upsertPublication,
+  publicationsFor,
+  listVideos,
   setPublishing,
   setOutros,
   type Env,
@@ -18,6 +21,23 @@ import { route } from "../worker/src/index";
 
 const T = (s: string) => Date.parse(s);
 const NOW = T("2026-10-06T19:00:00Z"); // Tuesday
+
+describe("source cleanup checkpoint completion", () => {
+  it("clears only the removed source's temporary state, idempotently, through the authenticated API", async () => {
+    const e = env();
+    for (const fileId of ["file1", "file2"]) {
+      await observeVideos(e.DB, [{ fileId, name: `${fileId}.mp4`, enteredFolderAt: new Date(NOW).toISOString(), entrySource: "drive_activity" }], NOW);
+      await upsertPublication(e.DB, { runId: fileId, fileId, platform: "facebook", surface: "feed", status: "confirmed" }, NOW);
+    }
+    const request = (authorized: boolean) => new Request("https://state.test/api/videos/complete", { method: "POST", headers: { "content-type": "application/json", authorization: authorized ? `Bearer ${e.STATE_API_TOKEN}` : "" }, body: JSON.stringify({ fileId: "file1" }) });
+    expect((await route(request(false), e)).status).toBe(401);
+    expect((await publicationsFor(e.DB, { fileId: "file1" }))).toHaveLength(1);
+    for (let i = 0; i < 2; i++) expect((await route(request(true), e)).status).toBe(200);
+    expect(await publicationsFor(e.DB, { fileId: "file1" })).toEqual([]);
+    expect((await listVideos(e.DB)).map((v: any) => v.file_id)).toEqual(["file2"]);
+    expect(await publicationsFor(e.DB, { fileId: "file2" })).toHaveLength(1);
+  });
+});
 
 function env() {
   return {

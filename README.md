@@ -5,6 +5,11 @@ Instagram (Reel + Story), Facebook (Reel or Page video + Story), TikTok (video p
 YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), on a weekly Europe/Sarajevo schedule or on demand.
 Separate from the image-card pipeline: no shared code, Worker, database or credentials.
 
+The Drive folder is the publishing queue: confirmed sources move to recoverable Drive Trash, then their
+temporary recovery checkpoints are cleared. FIFO/LIFO/custom selects from what remains; partial/pending
+uploads are protected from duplicate publishing. Outro assets are preserved. My Drive cleanup requires
+[Drive owner OAuth and a Worker update](docs/SETUP.md#drive-owner-authorization-for-automatic-cleanup).
+
 ```
 Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner)
   ├─ reads saved Sarajevo schedule from D1           ├─ checks claim / kill switch / staleness

@@ -394,6 +394,14 @@ export async function consumeVideo(db: Db, req: { fileId: string; runId: string;
 
 const STATUSES = new Set(["initiated", "processing", "confirmed", "failed", "uncertain", "unsupported", "disabled"]);
 
+/** Called only after Drive confirms source removal. These rows are recovery state, not a cursor. */
+export async function completeVideo(db: Db, fileId: string) {
+  if (!fileId) throw new HttpError(400, "fileId required");
+  await db.prepare("DELETE FROM publications WHERE file_id = ?").bind(fileId).run();
+  await db.prepare("DELETE FROM videos WHERE file_id = ?").bind(fileId).run();
+  return { ok: true };
+}
+
 export async function upsertPublication(
   db: Db,
   p: { runId: string; fileId: string; platform: string; surface: string; provider?: string; format?: string; status: string; remoteId?: string | null; url?: string | null; detail?: string | null },

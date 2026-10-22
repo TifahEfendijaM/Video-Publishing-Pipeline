@@ -41,18 +41,17 @@ describe("FIFO / LIFO ordering", () => {
     expect(r.notes.join(" ")).toMatch(/approximated by Drive createdTime/);
   });
 
-  it("skips videos already published by the pipeline (by file ID) and advances", () => {
+  it("uses remaining folder contents, ignoring the legacy consumed flag", () => {
     const recs = new Map(records);
     recs.set("idA", { ...recs.get("idA")!, consumed: true });
-    expect(selectVideo({ policy: "fifo", videos, records: recs }).video!.id).toBe("idB");
-    // a renamed file keeps its identity
+    expect(selectVideo({ policy: "fifo", videos, records: recs }).video!.id).toBe("idA");
     const renamed = videos.map((x) => (x.id === "idA" ? { ...x, name: "renamed.mp4" } : x));
-    expect(selectVideo({ policy: "fifo", videos: renamed, records: recs }).video!.id).toBe("idB");
+    expect(selectVideo({ policy: "fifo", videos: renamed, records: recs }).video!.id).toBe("idA");
+    expect(selectVideo({ policy: "fifo", videos: videos.filter((v) => v.id !== "idA"), records: recs }).video!.id).toBe("idB");
   });
 
   it("reports exhaustion without restarting", () => {
-    const all = new Map([...records].map(([k, r]) => [k, { ...r, consumed: true }]));
-    const r = selectVideo({ policy: "lifo", videos, records: all });
+    const r = selectVideo({ policy: "lifo", videos: [], records });
     expect(r.video).toBeNull();
     expect(r.eligibleCount).toBe(0);
     expect(selectVideo({ policy: "fifo", videos: [], records: new Map() }).video).toBeNull();
@@ -96,12 +95,22 @@ describe("custom selection", () => {
     expect(r.fallback).toMatch(/2 videos .* ambiguous/);
   });
 
-  it("may deliberately select a previously published video", () => {
+  it("custom also ignores legacy consumed flags", () => {
     const recs = new Map(records);
     recs.set("idA", { ...recs.get("idA")!, consumed: true });
     const r = selectVideo({ policy: "fifo", customName: "zebra.mp4", videos, records: recs });
     expect(r.video!.id).toBe("idA");
-    expect(r.notes.join(" ")).toMatch(/explicitly requested/);
+    expect(r.notes).toEqual([]);
+  });
+
+  it("cannot bypass pending publication checkpoints with custom or scheduled overrides", () => {
+    const blockedIds = new Set(["idA"]);
+    expect(selectVideo({ policy: "fifo", videos, records, blockedIds }).video!.id).toBe("idB");
+    for (const choice of [{ customName: "zebra.mp4" }, { pendingCustomFileId: "idA" }]) {
+      const r = selectVideo({ policy: "fifo", videos, records, blockedIds, ...choice });
+      expect(r.video).toBeNull();
+      expect(r.notes.join()).toMatch(/recovery tools/);
+    }
   });
 
   it("pending custom override that left the folder falls back", () => {
