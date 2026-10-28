@@ -52,6 +52,13 @@ export async function executeTasks(runId: string, fileId: string, tasks: Task[],
   const hosted = new Map<string, Promise<{ key: string; url: string }>>();
   let stopAll: string | null = null;
 
+  // Persist the complete plan before any provider request. An interrupted run must not look
+  // complete merely because its first destination succeeded. Refuse to publish if this fails.
+  for (const t of tasks) {
+    await deps.record({ runId, fileId, platform: t.platform, surface: t.surface, provider: t.provider, format: t.format,
+      status: t.blocked?.status ?? "disabled", detail: t.blocked?.detail ?? "Not attempted yet." });
+  }
+
   const gate: Gate = async () => {
     try {
       const g = await deps.mayPublish(runId);
@@ -91,6 +98,8 @@ export async function executeTasks(runId: string, fileId: string, tasks: Task[],
       continue;
     }
     let current: TaskResult = { ...base, status: "initiated" };
+    // Durable duplicate guard before sending anything, including if the process is terminated.
+    await deps.record({ ...current, runId, fileId });
     const progress: Progress = async (status, remoteId, detail) => {
       current = { ...current, status, remoteId: remoteId ?? current.remoteId, detail: detail ?? current.detail };
       await save(current);

@@ -6,14 +6,12 @@ import {
   configureAutomated,
   configureManual,
   consumeCustom,
-  consumeVideo,
+  completeVideo,
   dispatchTest,
   finishRun,
   getCredential,
   handleScheduled,
-  listVideos,
   mayPublish,
-  observeVideos,
   publicationsFor,
   putCredential,
   setPublishing,
@@ -56,7 +54,7 @@ export async function route(req: Request, env: Env): Promise<Response> {
   const m = req.method;
   const p = url.pathname;
   if (m === "GET" && p === "/api/state") return json(await stateView(db, now));
-  if (m === "GET" && p === "/api/videos") return json({ videos: await listVideos(db) });
+  if (m === "GET" && p === "/api/publications/files") return json({ fileIds: (await db.prepare("SELECT DISTINCT file_id FROM publications").all<{ file_id: string }>()).results.map((p) => p.file_id) });
   if (m === "GET" && p === "/api/publications") {
     const id = url.searchParams.get("id");
     return json({
@@ -98,11 +96,8 @@ export async function route(req: Request, env: Env): Promise<Response> {
       return json(await consumeCustom(db, String(b.runId)));
     case "/api/run/finish":
       return json(await finishRun(db, b, now));
-    case "/api/videos/observe":
-      if (!Array.isArray(b.items)) throw new HttpError(400, "items must be an array");
-      return json(await observeVideos(db, b.items, now));
-    case "/api/videos/consume":
-      return json(await consumeVideo(db, b, now));
+    case "/api/videos/complete":
+      return json(await completeVideo(db, String(b.fileId ?? "")));
     case "/api/publications/upsert":
       return json(await upsertPublication(db, b, now));
     case "/api/credentials/get":

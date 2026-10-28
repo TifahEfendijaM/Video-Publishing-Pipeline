@@ -27,9 +27,9 @@ export function mayBeLive(s: PublicationStatus): boolean {
   return s === "initiated" || s === "processing" || s === "confirmed" || s === "uncertain";
 }
 
-/** Only a definitive failure may be re-attempted, and only by an explicit retry request. */
+/** Only definitively failed or skipped destinations may be re-attempted, by explicit request. */
 export function isRetryable(s: PublicationStatus): boolean {
-  return s === "failed";
+  return s === "failed" || s === "disabled";
 }
 
 export type Platform = "instagram" | "facebook" | "tiktok" | "youtube";

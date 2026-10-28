@@ -1,12 +1,7 @@
-// Video selection: FIFO / LIFO by folder-entry time, one-run custom overrides, exhaustion.
+// Select from the live source folder by upload date, random choice, or one-run filename override.
 
-export type SelectionPolicy = "fifo" | "lifo";
+export type SelectionPolicy = "fifo" | "lifo" | "random";
 export type SelectionChoice = SelectionPolicy | "custom";
-
-export type EntrySource =
-  | "drive_activity" // exact: Drive Activity API create/upload/move-into-folder event
-  | "observed" // first time this pipeline saw the file in the folder (accurate to the sync interval)
-  | "created_time_approximation"; // Drive createdTime — NOT folder-entry time; labelled approximation
 
 export interface FolderVideo {
   id: string;
@@ -18,34 +13,12 @@ export interface FolderVideo {
   modifiedTime: string;
 }
 
-export interface VideoRecord {
-  fileId: string;
-  enteredFolderAt: string | null;
-  entrySource: EntrySource | null;
-  consumed: boolean;
-  md5AtPublication: string | null;
-}
-
-export interface RankedVideo extends FolderVideo {
-  enteredAt: string;
-  entrySource: EntrySource;
-}
-
-/** Combine the live folder listing with stored entry times. Falls back to createdTime, labelled as an approximation. */
-export function rankable(videos: FolderVideo[], records: Map<string, VideoRecord>): RankedVideo[] {
-  return videos.map((v) => {
-    const r = records.get(v.id);
-    if (r?.enteredFolderAt && r.entrySource) return { ...v, enteredAt: r.enteredFolderAt, entrySource: r.entrySource };
-    return { ...v, enteredAt: v.createdTime, entrySource: "created_time_approximation" as const };
-  });
-}
-
-/** Oldest-first (fifo) or newest-first (lifo); identical timestamps are broken by file ID (ascending) in both modes. */
-export function orderVideos(videos: RankedVideo[], policy: SelectionPolicy): RankedVideo[] {
+/** Oldest-first (fifo) or newest-first (lifo) by Drive createdTime; identical timestamps are broken by file ID (ascending) in both modes. */
+export function orderVideos(videos: FolderVideo[], policy: "fifo" | "lifo"): FolderVideo[] {
   const dir = policy === "fifo" ? 1 : -1;
   return [...videos].sort((a, b) => {
-    const ta = Date.parse(a.enteredAt);
-    const tb = Date.parse(b.enteredAt);
+    const ta = Date.parse(a.createdTime);
+    const tb = Date.parse(b.createdTime);
     if (ta !== tb) return (ta - tb) * dir;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
@@ -79,13 +52,14 @@ export function resolveCustomName(input: string | null | undefined, videos: Fold
 }
 
 export interface SelectionInput {
-  policy: SelectionPolicy; // saved FIFO/LIFO policy
+  policy: SelectionPolicy; // saved FIFO/LIFO/random policy
   customName?: string | null; // manual_now custom filename (one-run)
   pendingCustomFileId?: string | null; // automated: saved one-occurrence override
   pendingCustomFileName?: string | null;
   videos: FolderVideo[]; // successful listing of the folder (videos only)
-  records: Map<string, VideoRecord>;
-  excludeIds?: Set<string>; // configured outro clips: never picked by FIFO/LIFO (custom may still pick them)
+  random?: () => number; // injectable uniform draw in [0, 1), defaults to Math.random
+  excludeIds?: Set<string>; // configured outro clips: never picked automatically (custom may still pick them)
+  blockedIds?: Set<string>; // temporary pending/partial publications or confirmed files awaiting cleanup
 }
 
 /** Outro clips are excluded from automatic selection: configured outros, and any file whose name contains "outro". */
@@ -94,18 +68,27 @@ export function isOutroName(name: string): boolean {
 }
 
 export interface SelectionResult {
-  video: RankedVideo | null;
-  method: "fifo" | "lifo" | "custom";
-  fallback: string | null; // why a custom request fell back to FIFO/LIFO
+  video: FolderVideo | null;
+  method: SelectionChoice;
+  fallback: string | null; // why a custom request fell back to the saved policy
   notes: string[];
   eligibleCount: number;
 }
 
 export function selectVideo(input: SelectionInput): SelectionResult {
   const videos = input.videos.filter(isVideo);
-  const ranked = rankable(videos, input.records);
+  const ranked = videos.filter((v) => !input.blockedIds?.has(v.id));
   const notes: string[] = [];
   let fallback: string | null = null;
+
+  const requested = input.pendingCustomFileId ?? (input.customName ? (() => {
+    const r = resolveCustomName(input.customName, videos);
+    return r.kind === "match" ? r.video.id : null;
+  })() : null);
+  if (requested && input.blockedIds?.has(requested)) {
+    notes.push("The requested video has pending/partial publications or is awaiting Drive cleanup. Use the recovery tools before publishing it again.");
+    return { video: null, method: "custom", fallback: null, notes, eligibleCount: ranked.length };
+  }
 
   if (input.pendingCustomFileId) {
     const v = ranked.find((x) => x.id === input.pendingCustomFileId);
@@ -118,7 +101,6 @@ export function selectVideo(input: SelectionInput): SelectionResult {
     if (r.kind === "match") {
       if (r.note) notes.push(`Custom filename ${r.note}.`);
       const v = ranked.find((x) => x.id === r.video.id)!;
-      if (input.records.get(v.id)?.consumed) notes.push("This video was published by the pipeline before; republishing it was explicitly requested.");
       return { video: v, method: "custom", fallback: null, notes, eligibleCount: ranked.length };
     }
     if (r.kind === "blank") fallback = `Custom selected but the filename was empty; using the saved ${input.policy.toUpperCase()} policy.`;
@@ -128,12 +110,14 @@ export function selectVideo(input: SelectionInput): SelectionResult {
 
   const outros = ranked.filter((v) => input.excludeIds?.has(v.id) || isOutroName(v.name));
   if (outros.length) notes.push(`${outros.length} outro clip(s) excluded from automatic selection: ${outros.map((v) => v.name).join(", ")}.`);
-  const eligible = ranked.filter((v) => !input.records.get(v.id)?.consumed && !outros.includes(v));
-  const ordered = orderVideos(eligible, input.policy);
-  if (ordered.some((v) => v.entrySource === "created_time_approximation")) {
-    notes.push("Some folder-entry times are approximated by Drive createdTime (exact entry time unavailable).");
-  }
-  return { video: ordered[0] ?? null, method: input.policy, fallback, notes, eligibleCount: eligible.length };
+  const eligible = ranked.filter((v) => !outros.includes(v));
+  let video: FolderVideo | null = null;
+  if (eligible.length && input.policy === "random") {
+    const draw = (input.random ?? Math.random)();
+    if (!Number.isFinite(draw) || draw < 0 || draw >= 1) throw new Error("Random draw must be in [0, 1)");
+    video = eligible[Math.floor(draw * eligible.length)];
+  } else if (input.policy !== "random") video = orderVideos(eligible, input.policy)[0] ?? null;
+  return { video, method: input.policy, fallback, notes, eligibleCount: eligible.length };
 }
 
 export const NO_ELIGIBLE_MESSAGE = "No eligible videos available.";

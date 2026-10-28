@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { makeDb } from "./d1-shim";
 import {
   beginRun,
+  finishRun,
   configureAutomated,
   configureManual,
   consumeCustom,
@@ -9,7 +11,8 @@ import {
   getSettings,
   handleScheduled,
   mayPublish,
-  observeVideos,
+  upsertPublication,
+  publicationsFor,
   setPublishing,
   setOutros,
   type Env,
@@ -18,6 +21,27 @@ import { route } from "../worker/src/index";
 
 const T = (s: string) => Date.parse(s);
 const NOW = T("2026-10-06T19:00:00Z"); // Tuesday
+
+describe("source cleanup checkpoint completion", () => {
+  it("clears only the removed source's temporary state, idempotently, through the authenticated API", async () => {
+    const e = env();
+    for (const fileId of ["file1", "file2"]) {
+      await upsertPublication(e.DB, { runId: fileId, fileId, platform: "facebook", surface: "feed", status: "confirmed" }, NOW);
+    }
+    const run = await beginRun(e.DB, { origin: "manual" }, NOW);
+    await finishRun(e.DB, { runId: run.runId!, status: "completed", selectedFileId: "file1", selectedFileName: "lesson.mp4" }, NOW);
+    const request = (authorized: boolean) => new Request("https://state.test/api/videos/complete", { method: "POST", headers: { "content-type": "application/json", authorization: authorized ? `Bearer ${e.STATE_API_TOKEN}` : "" }, body: JSON.stringify({ fileId: "file1" }) });
+    expect((await route(request(false), e)).status).toBe(401);
+    expect((await publicationsFor(e.DB, { fileId: "file1" }))).toHaveLength(1);
+    for (let i = 0; i < 2; i++) expect((await route(request(true), e)).status).toBe(200);
+    expect(await publicationsFor(e.DB, { fileId: "file1" })).toEqual([]);
+    expect(e.DB.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'videos'").get()).toBeUndefined();
+    expect(await publicationsFor(e.DB, { fileId: "file2" })).toHaveLength(1);
+    expect(e.DB.raw.prepare("SELECT selected_file_id, selected_file_name, status FROM runs WHERE run_id = ?").get(run.runId!)).toMatchObject({ selected_file_id: null, selected_file_name: null, status: "completed" });
+    const response = await route(new Request("https://state.test/api/publications/files", { headers: { authorization: `Bearer ${e.STATE_API_TOKEN}` } }), e);
+    expect(await response.json()).toEqual({ fileIds: ["file2"] });
+  });
+});
 
 function env() {
   return {
@@ -257,19 +281,6 @@ describe("scheduled run validation (stale / cancelled / duplicate)", () => {
   });
 });
 
-describe("video entry tracking", () => {
-  it("upgrades approximations to exact Drive activity times but never downgrades", async () => {
-    const e = env();
-    await observeVideos(e.DB, [{ fileId: "f1", name: "a.mp4", enteredFolderAt: "2026-09-18T19:21:00Z", entrySource: "created_time_approximation" }], NOW);
-    await observeVideos(e.DB, [{ fileId: "f1", name: "a.mp4", enteredFolderAt: "2026-09-19T10:00:00Z", entrySource: "drive_activity" }], NOW);
-    await observeVideos(e.DB, [{ fileId: "f1", name: "renamed.mp4", enteredFolderAt: "2026-01-01T00:00:00Z", entrySource: "created_time_approximation" }], NOW);
-    const row = e.DB.raw.prepare("SELECT * FROM videos WHERE file_id='f1'").get() as any;
-    expect(row.entered_folder_at).toBe("2026-09-19T10:00:00Z");
-    expect(row.entry_source).toBe("drive_activity");
-    expect(row.last_known_name).toBe("renamed.mp4");
-  });
-});
-
 describe("HTTP API", () => {
   it("requires the bearer token and validates config", async () => {
     const e = env();
@@ -347,5 +358,27 @@ describe("outros", () => {
     expect(s.outros).toEqual({ youtube: { fileId: "1Edf0K75AQEhJOLWsWYYY61C96B_HrojG", fileName: "outro_yt.mp4" }, tiktok: null });
     expect(s.configVersion).toBe(v0);
     await expect(setOutros(e.DB, { snapchat: null } as any, "t", NOW)).rejects.toThrow(/unknown outro platform/);
+  });
+});
+
+
+describe("folder queue migration", () => {
+  it("preserves saved settings, enables random, drops selection history and keeps upload recovery evidence", async () => {
+    const db = makeDb(["0001_init.sql", "0002_outros.sql"]);
+    await configureAutomated(db, { scheduleText: "mon 06:00; fri 21:00", selectionPolicy: "lifo", pendingCustom: { fileId: "custom_video_id_123", fileName: "lesson.mp4" } }, NOW);
+    await setPublishing(db, true, "owner", NOW);
+    await setOutros(db, { youtube: { fileId: "outro_video_id_123", fileName: "outro.mp4" } }, "owner", NOW);
+    const before = await getSettings(db);
+    for (const file of ["confirmed", "missing-outcome"]) db.raw.prepare("INSERT INTO videos(file_id, first_observed_at, consumed) VALUES (?, ?, 1)").run(file, new Date(NOW).toISOString());
+    await upsertPublication(db, { runId: "old", fileId: "confirmed", platform: "facebook", surface: "feed", status: "confirmed" }, NOW);
+    db.raw.exec(readFileSync(new URL("../worker/migrations/0003_folder_queue.sql", import.meta.url), "utf8"));
+    expect(await getSettings(db)).toEqual(before);
+    expect(await publicationsFor(db, { fileId: "confirmed" })).toMatchObject([{ status: "confirmed" }]);
+    expect(await publicationsFor(db, { fileId: "missing-outcome" })).toMatchObject([{ status: "uncertain", platform: "pipeline" }]);
+    expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name = 'videos'").get()).toBeUndefined();
+    await configureAutomated(db, { selectionPolicy: "random" }, NOW + 1);
+    expect((await getSettings(db)).selectionPolicy).toBe("random");
+    await configureManual(db, { selectionPolicy: "random" }, NOW + 2);
+    expect((await getSettings(db)).selectionPolicy).toBe("random");
   });
 });

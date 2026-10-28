@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-worker
+  group: easybosnian-publishing
   cancel-in-progress: false
 
 jobs:

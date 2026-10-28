@@ -3,9 +3,9 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import type { Db, Stmt } from "../worker/src/logic";
 
-export function makeDb(): Db & { raw: DatabaseSync } {
+export function makeDb(migrations = ["0001_init.sql", "0002_outros.sql", "0003_folder_queue.sql"]): Db & { raw: DatabaseSync } {
   const raw = new DatabaseSync(":memory:");
-  for (const m of ["0001_init.sql", "0002_outros.sql"]) raw.exec(readFileSync(new URL(`../worker/migrations/${m}`, import.meta.url), "utf8"));
+  for (const m of migrations) raw.exec(readFileSync(new URL(`../worker/migrations/${m}`, import.meta.url), "utf8"));
   const prepare = (sql: string): Stmt => {
     let params: unknown[] = [];
     const stmt: Stmt = {

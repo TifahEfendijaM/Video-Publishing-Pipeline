@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, secrets, type PipelineConfig } from "./config";
 import { StateClient } from "./state-client";
-import { Drive, DRIVE_SCOPES, serviceAccountEmail, serviceAccountToken, oauthAccessToken, syncEntryTimes } from "./google";
+import { Drive, DRIVE_SCOPES, serviceAccountEmail, serviceAccountToken, oauthAccessToken } from "./google";
 import { probe, renderStory, renderCanvas, renderWidescreen, concatWithOutro } from "./media-tools";
 import type { MediaInfo } from "../../src/shared/media";
 import { resolveCustomName, effectiveOutro } from "../../src/shared/selection";
@@ -18,9 +18,10 @@ import { Meta } from "./providers/meta";
 import { Buffer } from "./providers/buffer";
 import { YouTube } from "./providers/youtube";
 import { UploadPost } from "./providers/uploadpost";
-import { anyMayBeLive, buildTasks, executeTasks, type Identities, type Providers, type StoryFiles, type TaskResult } from "./publish";
+import { buildTasks, executeTasks, type Identities, type Providers, type StoryFiles, type TaskResult } from "./publish";
+import { completeArchived, latestPublications, maintainQueue } from "./queue";
 import { Summary, statusLabel } from "./summary";
-import { NO_ELIGIBLE_MESSAGE, selectVideo, type FolderVideo, type SelectionPolicy, type VideoRecord } from "../../src/shared/selection";
+import { NO_ELIGIBLE_MESSAGE, selectVideo, type FolderVideo, type SelectionPolicy } from "../../src/shared/selection";
 import { ScheduleParseError, formatSchedule, parseSchedule } from "../../src/shared/schedule";
 import { planFeed, planStory, planYouTubeVersions } from "../../src/shared/media";
 import { redact, summarizeError } from "../../src/shared/redact";
@@ -38,22 +39,50 @@ function stateClient(): StateClient {
   return new StateClient(url, token);
 }
 
-async function drive(): Promise<Drive> {
-  const sa = sec("GOOGLE_SERVICE_ACCOUNT_JSON");
-  if (!sa) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON secret is not configured");
-  return new Drive(await serviceAccountToken(sa, DRIVE_SCOPES), cfg.driveFolderId);
+function archiveOptions() {
+  return { folderId: env("PUBLISHED_DRIVE_FOLDER_ID") || cfg.publishedFolderId, folderName: cfg.publishedFolderName };
 }
 
-async function folderState(d: Drive, state: StateClient) {
-  const videos = await d.listVideos(); // throws on auth/network errors — never treated as "not found"
-  const rows = (await state.videos()).videos;
-  const known = new Map(rows.map((r: any) => [r.file_id, { entrySource: r.entry_source }]));
-  const sync = await syncEntryTimes(d, state, videos, known);
-  const fresh = (await state.videos()).videos;
-  const records = new Map<string, VideoRecord>(
-    fresh.map((r: any) => [r.file_id, { fileId: r.file_id, enteredFolderAt: r.entered_folder_at, entrySource: r.entry_source, consumed: r.consumed === 1, md5AtPublication: r.md5_at_publication }]),
-  );
-  return { videos, records, notes: sync.notes, exactCount: sync.exactCount };
+async function drive(): Promise<Drive> {
+  const [clientId, clientSecret, refreshToken] = [sec("GOOGLE_DRIVE_CLIENT_ID"), sec("GOOGLE_DRIVE_CLIENT_SECRET"), sec("GOOGLE_DRIVE_REFRESH_TOKEN")];
+  if (clientId || clientSecret || refreshToken) {
+    if (!clientId || !clientSecret || !refreshToken) throw new Error("Set all three GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_REFRESH_TOKEN secrets");
+    const t = await oauthAccessToken({ clientId, clientSecret, refreshToken, encryptionKey: sec("CREDENTIALS_ENCRYPTION_KEY"), state: stateClient(), credentialName: "drive_refresh_token" });
+    if (!t.scopes.includes(DRIVE_SCOPES[0])) throw new Error("Drive owner OAuth token needs the https://www.googleapis.com/auth/drive scope for source archival");
+    return new Drive(t.accessToken, cfg.driveFolderId, archiveOptions());
+  }
+  const sa = sec("GOOGLE_SERVICE_ACCOUNT_JSON");
+  if (!sa) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON secret is not configured");
+  return new Drive(await serviceAccountToken(sa, DRIVE_SCOPES), cfg.driveFolderId, archiveOptions());
+}
+
+function queueDeps(d: Drive, state: StateClient) {
+  return { publications: async (fileId: string) => (await state.publications({ fileId })).publications,
+    archive: (fileId: string) => d.archive(fileId), complete: (fileId: string) => state.completeVideo(fileId) };
+}
+
+async function cleanupFolder(s: Summary, state: StateClient) {
+  const d = await drive();
+  await recoverArchived(d, state, s);
+  const videos = await d.listVideos();
+  const saved = (await state.state()).settings.outros ?? {};
+  const protectedIds = new Set<string>(Object.values(saved).flatMap((o: any) => o ? [o.fileId] : []));
+  for (const p of ["youtube", "tiktok", "instagram", "facebook"]) {
+    const outro = effectiveOutro(saved[p], videos, cfg.outros?.defaultFileName ?? "");
+    if (outro) protectedIds.add(outro.fileId);
+  }
+  const q = await maintainQueue(videos, protectedIds, queueDeps(d, state));
+  if (q.notes.length) { s.h(2, "Drive source cleanup"); s.list(q.notes); }
+}
+
+async function recoverArchived(d: Drive, state: StateClient, s: Summary) {
+  const { fileIds } = await state.checkpointFiles();
+  if (!fileIds.length) return;
+  const folder = await d.publishedFolder(false);
+  if (!folder) return;
+  const archived = new Set((await d.listVideos(folder.id)).map((v) => v.id));
+  const count = await completeArchived(archived, fileIds, queueDeps(d, state));
+  if (count) s.p(`Cleared recovery checkpoints for ${count} source(s) already in Published videos.`);
 }
 
 async function providers(state: StateClient): Promise<Providers> {
@@ -153,43 +182,42 @@ interface PublishOpts {
 async function publishFlow(o: PublishOpts): Promise<string> {
   const s = o.summary;
   const d = await drive();
-  const folder = await folderState(d, o.state);
+  if (!o.preview) await recoverArchived(d, o.state, s);
+  const folder = { videos: await d.listVideos() };
   const savedOutros: Record<string, { fileId: string; fileName: string } | null> = (await o.state.state()).settings.outros ?? {};
   const outros = Object.fromEntries(
     (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(o.outroOverrides && p in o.outroOverrides ? o.outroOverrides[p] : savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
   );
   const excludeIds = new Set(Object.values(outros).flatMap((x) => (x ? [x.fileId] : [])));
+  for (const outro of Object.values(savedOutros)) if (outro) excludeIds.add(outro.fileId);
+  const queue = await maintainQueue(folder.videos, excludeIds, queueDeps(d, o.state), !!o.preview);
   let sel;
   if (o.forcedFileId) {
     const v = folder.videos.find((x) => x.id === o.forcedFileId);
-    if (!v) throw new Error(`Video ${o.forcedFileId} is no longer in the folder; cannot retry.`);
-    sel = { ...selectVideo({ policy: o.policy, pendingCustomFileId: v.id, pendingCustomFileName: v.name, videos: [v], records: folder.records }), method: "retry" as const };
+    if (!v || !await d.stillInFolder(v.id)) throw new Error(`Video ${o.forcedFileId} is no longer in the folder; cannot retry.`);
+    sel = { ...selectVideo({ policy: o.policy, pendingCustomFileId: v.id, pendingCustomFileName: v.name, videos: [v] }), method: "retry" as const };
   } else {
-    sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: folder.videos, records: folder.records, excludeIds });
+    sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: folder.videos, excludeIds, blockedIds: queue.blockedIds });
   }
   s.h(2, "Video selection");
   s.kv([
     ["Method", sel.method === "custom" ? "custom (one-run override)" : sel.method.toUpperCase()],
     ["Fallback", sel.fallback ?? "none"],
-    ["Eligible (not yet published) videos", sel.eligibleCount],
-    ["Folder-entry times", `${folder.exactCount}/${folder.videos.length} exact from Drive Activity; others labelled approximations`],
+    ["Eligible videos remaining in the folder", sel.eligibleCount],
+    ["Date ordering", "Drive upload/creation date (createdTime)"],
   ]);
-  if (folder.notes.length || sel.notes.length) s.list([...folder.notes, ...sel.notes]);
+  if (sel.notes.length || queue.notes.length) s.list([...queue.notes, ...sel.notes]);
   if (!sel.video) {
     s.p(`**${NO_ELIGIBLE_MESSAGE}** Nothing was published.`);
-    await o.state.finishRun({ runId: o.runId, status: "no_eligible_video", selectionMethod: sel.method, selectionNote: sel.fallback ?? undefined });
+    if (!o.preview) await o.state.finishRun({ runId: o.runId, status: "no_eligible_video", selectionMethod: sel.method, selectionNote: sel.fallback ?? undefined });
     return "no_eligible_video";
   }
   const v = sel.video;
-  const rec = folder.records.get(v.id);
   s.kv([
     ["Selected file", v.name],
     ["Drive file ID", v.id],
-    ["Entered folder", `${v.enteredAt} (${v.entrySource.replace(/_/g, " ")})`],
+    ["Uploaded/created in Drive", v.createdTime],
   ]);
-  if (rec?.consumed && rec.md5AtPublication && v.md5 && rec.md5AtPublication !== v.md5) {
-    s.p("Note: this file's content changed since it was published. Under the current policy an edited file is the same video (same Drive ID).");
-  }
 
   const work = mkdtempSync(join(tmpdir(), "ebv-"));
   try {
@@ -303,7 +331,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     if (o.filter) tasks = tasks.filter((t) => o.filter!.has(`${t.platform}:${t.surface}`));
 
     if (o.preview) {
-      s.h(2, "Planned destinations (preview — nothing was published, selection history unchanged)");
+      s.h(2, "Planned destinations (preview — nothing was published, source queue unchanged)");
       s.table(["Platform", "Surface", "Format", "Provider", "Would be"], tasks.map((t) => [t.platform, t.surface, t.format, t.provider, t.blocked ? `${statusLabel(t.blocked.status)}: ${t.blocked.detail}` : "attempted"]));
       return "preview";
     }
@@ -317,14 +345,15 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       host: host ? (p) => host.put(p) : undefined,
       log: (m) => console.log(redact(m)),
     });
-    if (anyMayBeLive(results)) await o.state.consumeVideo({ fileId: v.id, runId: o.runId, md5: v.md5 });
+    const cleanup = await maintainQueue([v], excludeIds, queueDeps(d, o.state));
+    if (cleanup.notes.length) { s.h(2, "Drive source cleanup"); s.list(cleanup.notes); }
     // Keep hosted media only while a URL-fetching provider may still need it (lifecycle rule deletes it anyway).
-    const urlPending = results.some((r) => (r.provider === "buffer" || r.platform === "instagram") && (r.status === "processing" || r.status === "initiated"));
+    const urlPending = results.some((r) => (r.provider === "buffer" || r.platform === "instagram") && (r.status === "processing" || r.status === "initiated" || r.status === "uncertain"));
     if (host && !urlPending) for (const k of hostedKeys) await host.remove(k).catch(() => {});
 
     reportResults(s, results);
     const status = results.every((r) => r.status === "confirmed" || r.status === "unsupported") ? "completed" : results.some((r) => r.status === "confirmed") ? "partial" : "not_published";
-    await o.state.finishRun({ runId: o.runId, status, selectedFileId: v.id, selectedFileName: v.name, selectionMethod: sel.method, selectionNote: sel.fallback ?? undefined });
+    await o.state.finishRun({ runId: o.runId, status, selectedFileId: cleanup.archivedIds.has(v.id) ? undefined : v.id, selectedFileName: cleanup.archivedIds.has(v.id) ? undefined : v.name, selectionMethod: sel.method, selectionNote: sel.fallback ?? undefined });
     return status;
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -340,6 +369,7 @@ function reportResults(s: Summary, results: TaskResult[]) {
   const next: string[] = [];
   for (const r of results) {
     if (r.status === "failed") next.push(`${r.platform}/${r.surface} failed definitively — re-attempt only this destination with Tools → retry_failed (run ID shown above).`);
+    if (r.status === "disabled") next.push(`${r.platform}/${r.surface} was skipped — fix its configuration or enable publishing, then use Tools → retry_failed for this run.`);
     if (r.status === "uncertain") next.push(`${r.platform}/${r.surface} outcome is UNCERTAIN — check the account manually, then Tools → resolve_publication. It will never be retried automatically.`);
     if (r.status === "processing" || r.status === "initiated") next.push(`${r.platform}/${r.surface} still processing — Tools → reconcile later to confirm.`);
   }
@@ -391,7 +421,7 @@ async function cmdConfigure() {
     if (save && Object.keys(changes).length) await state.setOutros(changes, actor);
     return { notes, changes };
   };
-  if (!["fifo", "lifo", "custom"].includes(selection)) throw new Error("video_selection must be fifo, lifo or custom");
+  if (!["fifo", "lifo", "random", "custom"].includes(selection)) throw new Error("video_selection must be fifo, lifo, random or custom");
   const policyChoice = selection === "custom" ? null : (selection as SelectionPolicy);
 
   s.h(1, `EasyBosnian video — ${mode}`);
@@ -449,15 +479,15 @@ async function cmdConfigure() {
   let pending: { fileId: string; fileName: string } | null = null;
   const notes: string[] = [];
   if (selection === "custom") {
-    if (!customName.trim()) notes.push("Custom selected but the filename was empty: the saved FIFO/LIFO policy will be used.");
+    if (!customName.trim()) notes.push("Custom selected but the filename was empty: the saved FIFO/LIFO/random policy will be used.");
     else {
       const d = await drive(); // auth/network failures abort here and leave the configuration untouched
       const videos = await d.listVideos();
       const { resolveCustomName } = await import("../../src/shared/selection");
       const r = resolveCustomName(customName, videos);
       if (r.kind === "match") pending = { fileId: r.video.id, fileName: r.video.name };
-      else if (r.kind === "not_found") notes.push(`No video named "${r.name}" in the folder: the saved FIFO/LIFO policy will be used.`);
-      else if (r.kind === "ambiguous") notes.push(`${r.count} videos are named "${r.name}": ambiguous, so the saved FIFO/LIFO policy will be used.`);
+      else if (r.kind === "not_found") notes.push(`No video named "${r.name}" in the folder: the saved FIFO/LIFO/random policy will be used.`);
+      else if (r.kind === "ambiguous") notes.push(`${r.count} videos are named "${r.name}": ambiguous, so the saved FIFO/LIFO/random policy will be used.`);
     }
   } else if (customName.trim()) notes.push("custom_video_name ignored because video_selection is not custom.");
   notes.push(...(await applyOutros(true)).notes);
@@ -553,7 +583,7 @@ async function cmdTools() {
   } else if (action === "preview") {
     const st = await state.state();
     const begin = { runId: `preview-${Date.now()}` };
-    s.p("Private preview: selection is computed read-only, nothing is published and the selection history is not changed. Story renditions are attached as a workflow artifact.");
+    s.p("Private preview: selection is computed read-only, nothing is published and the source queue is not changed. Story renditions are attached as a workflow artifact.");
     await publishFlow({ runId: begin.runId, origin: "manual", policy: st.settings.selectionPolicy, customName: target || null, pendingCustom: target ? null : st.settings.pendingCustom, preview: true, summary: s, state: readOnly(state) });
   } else if (action === "reconcile") {
     await reconcile(s, state);
@@ -564,12 +594,14 @@ async function cmdTools() {
     if (!["uncertain", "processing", "initiated"].includes(pub.status)) throw new Error(`publication ${target} is ${pub.status}; only open outcomes can be resolved`);
     await state.upsertPublication({ runId: pub.run_id, fileId: pub.file_id, platform: pub.platform, surface: pub.surface, status: resolution, detail: `resolved manually as ${resolution} by ${actor} (was ${pub.status})` });
     s.p(`Publication ${target} (${pub.platform}/${pub.surface}) marked ${resolution}.`);
+    await cleanupFolder(s, state);
   } else if (action === "retry_failed") {
     if (!target) throw new Error("retry_failed needs target = the run ID from the original run summary");
     const pubs = (await state.publications({ runId: target })).publications;
-    const failed = pubs.filter((p: any) => isRetryable(p.status as PublicationStatus));
+    const latest = pubs.length ? latestPublications((await state.publications({ fileId: pubs[0].file_id })).publications) : [];
+    const failed = pubs.filter((p: any) => isRetryable(p.status as PublicationStatus) && latest.some((q) => q.id === p.id));
     if (!failed.length) {
-      s.p("Nothing to retry: no definitively failed destinations in that run (uncertain/processing outcomes are never retried automatically).");
+      s.p("Nothing to retry: no current failed or skipped destinations in that run (confirmed or pending outcomes are never resent).");
     } else {
       const begin = await state.beginRun({ origin: "retry", githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
       const st = await state.state();
@@ -580,12 +612,11 @@ async function cmdTools() {
   s.write();
 }
 
-/** Wrap the state client so preview mode cannot write selection history or publications. */
+/** Wrap the state client so preview mode cannot move sources or write publications. */
 function readOnly(state: StateClient): StateClient {
   return new Proxy(state, {
     get(target, prop, recv) {
-      if (prop === "observe") return async () => ({ ok: true, readOnly: true });
-      if (["consumeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "configureAutomated", "setPublishing"].includes(String(prop))) {
+      if (["completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "configureAutomated", "setPublishing"].includes(String(prop))) {
         return async () => {
           throw new Error(`preview is read-only (${String(prop)})`);
         };
@@ -613,13 +644,10 @@ async function verify(s: Summary, state: StateClient) {
     const d = await drive();
     const f = await d.folder();
     const vids = await d.listVideos();
-    add("Google Drive folder", f.id === cfg.driveFolderId && f.mimeType === "application/vnd.google-apps.folder", `"${f.name}" (${f.id}) via ${serviceAccountEmail(sa!)}; ${vids.length} videos`);
-    try {
-      const at = await d.folderEntryTimes();
-      add("Drive Activity (folder-entry times)", true, `${vids.filter((v) => at.has(v.id)).length}/${vids.length} videos have an exact create/move-in time`);
-    } catch (e) {
-      add("Drive Activity (folder-entry times)", false, summarizeError(e, 200));
-    }
+    add("Google Drive folder", f.id === cfg.driveFolderId && f.mimeType === "application/vnd.google-apps.folder", `"${f.name}" (${f.id}) via ${sec("GOOGLE_DRIVE_REFRESH_TOKEN") ? "Drive owner OAuth" : serviceAccountEmail(sa!)}; ${vids.length} videos`);
+    const source = vids.find((v) => !/outro/i.test(v.name));
+    add("Drive source cleanup permission", source ? await d.canArchive(source.id) : null, source ? `Source "${source.name}" must allow moving into Published videos; grant Editor access or use Drive OAuth (see docs/SETUP.md).` : "No source video available to check; no file was modified.");
+
   } catch (e) {
     add("Google Drive folder", false, summarizeError(e, 200));
   }
@@ -684,7 +712,7 @@ async function verify(s: Summary, state: StateClient) {
     }
   } else add("Free caption model (Workers AI)", false, "CLOUDFLARE_AI_TOKEN not configured — the generic caption will always be used");
   add("Rotated-credential encryption key", !!sec("CREDENTIALS_ENCRYPTION_KEY"), sec("CREDENTIALS_ENCRYPTION_KEY") ? "configured" : "missing — a rotated refresh token could not be persisted");
-  s.p("Verification mode: read-only identity and permission checks. Nothing is published and no selection history changes.");
+  s.p("Verification mode: read-only identity and permission checks. Nothing is published and no source queue changes.");
   s.table(["Check", "OK", "Detail"], rows);
 }
 
@@ -692,6 +720,7 @@ async function reconcile(s: Summary, state: StateClient) {
   const open = (await state.publications({ open: true })).publications;
   if (!open.length) {
     s.p("No open publications.");
+    await cleanupFolder(s, state);
     return;
   }
   const prov = await providers(state).catch(() => ({}) as Providers);
@@ -715,8 +744,9 @@ async function reconcile(s: Summary, state: StateClient) {
       rows.push([String(p.id), p.platform, p.surface, `${statusLabel(p.status)} → ${statusLabel(o.status)}`, o.url ?? ""]);
     } else rows.push([String(p.id), p.platform, p.surface, `${statusLabel(p.status)} (unchanged)`, p.url ?? p.remote_id ?? ""]);
   }
-  s.p("Reconcile only reads provider status; it never re-sends a publication.");
+  s.p("Reconcile reads provider status and cleans up confirmed Drive sources; it never re-sends a publication.");
   s.table(["ID", "Platform", "Surface", "Status", "Link / ID"], rows);
+  await cleanupFolder(s, state);
 }
 
 const cmd = process.argv[2];

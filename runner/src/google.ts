@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { HttpStatusError, json, request } from "./http";
 import { registerSecret } from "../../src/shared/redact";
-import type { FolderVideo, EntrySource } from "../../src/shared/selection";
+import type { FolderVideo } from "../../src/shared/selection";
 import type { StateClient } from "./state-client";
 
 const b64url = (b: Buffer | string) => Buffer.from(b).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -98,10 +98,46 @@ export async function oauthAccessToken(c: OAuthClient): Promise<{ accessToken: s
 // ---------------------------------------------------------------------------
 // Drive
 
-export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.activity.readonly"];
+export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"];
 
 export class Drive {
-  constructor(private token: string, private folderId: string) {}
+  private archiveFolderId?: string;
+  constructor(private token: string, private folderId: string, private archiveOptions: { folderId?: string; folderName?: string } = {}) {}
+
+  private async metadata(fileId: string): Promise<any> {
+    return json(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed,parents,capabilities(canAddChildren,canMoveItemWithinDrive)&supportsAllDrives=true`, { label: "drive archive metadata", headers: this.h() });
+  }
+
+  /** Resolve a configured archive, or find/create a child folder. Read-only checks never create it. */
+  async publishedFolder(create = false): Promise<{ id: string; name: string; capabilities?: { canAddChildren?: boolean } } | null> {
+    const explicit = this.archiveOptions.folderId || this.archiveFolderId;
+    if (explicit) {
+      if (explicit === this.folderId) throw new Error("Published videos folder must differ from the source folder");
+      const folder = await this.metadata(explicit);
+      if (folder.trashed || folder.mimeType !== "application/vnd.google-apps.folder") throw new Error("Published videos destination is not an active Drive folder");
+      return folder;
+    }
+    const name = this.archiveOptions.folderName || "Published videos";
+    const escape = (v: string) => v.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const params = new URLSearchParams({ q: `'${escape(this.folderId)}' in parents and name = '${escape(name)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: "nextPageToken,files(id,name,capabilities(canAddChildren))", pageSize: "1000", supportsAllDrives: "true", includeItemsFromAllDrives: "true" });
+    const found = await json<any>(`https://www.googleapis.com/drive/v3/files?${params}`, { label: "drive published folder", headers: this.h() });
+    if (found.nextPageToken || found.files?.length > 1) throw new Error("Multiple Published videos folders found; set PUBLISHED_DRIVE_FOLDER_ID to choose one");
+    if (found.files?.length === 1) {
+      this.archiveFolderId = found.files[0].id;
+      return found.files[0];
+    }
+    if (!create) return null;
+    const folder = await json<any>("https://www.googleapis.com/drive/v3/files?fields=id,name,capabilities(canAddChildren)&supportsAllDrives=true", { label: "drive create published folder", method: "POST", headers: { ...this.h(), "content-type": "application/json" }, body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [this.folderId] }) });
+    this.archiveFolderId = folder.id;
+    return folder;
+  }
+
+  async canArchive(fileId: string): Promise<boolean> {
+    const source = await this.metadata(fileId);
+    const archive = await this.publishedFolder(false);
+    const destination = archive ?? await this.metadata(this.folderId);
+    return source.capabilities?.canMoveItemWithinDrive === true && destination.capabilities?.canAddChildren === true;
+  }
 
   private h() {
     return { authorization: `Bearer ${this.token}` };
@@ -113,11 +149,11 @@ export class Drive {
   }
 
   /** Lists videos directly in the folder. Throws on any auth/network error — never returns an empty list on failure. */
-  async listVideos(): Promise<FolderVideo[]> {
+  async listVideos(folderId = this.folderId): Promise<FolderVideo[]> {
     const out: FolderVideo[] = [];
     let pageToken: string | undefined;
     do {
-      const q = `'${this.folderId}' in parents and trashed = false and mimeType contains 'video/'`;
+      const q = `'${folderId}' in parents and trashed = false and mimeType contains 'video/'`;
       const params = new URLSearchParams({
         q,
         fields: "nextPageToken, files(id,name,mimeType,size,md5Checksum,createdTime,modifiedTime)",
@@ -134,50 +170,6 @@ export class Drive {
       pageToken = r.nextPageToken;
     } while (pageToken);
     return out;
-  }
-
-  /**
-   * Folder-entry times from the Drive Activity API: the latest CREATE (upload/new/copy) or MOVE whose
-   * added parent is this folder. Files without such an event in the available history are omitted.
-   */
-  async folderEntryTimes(): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
-    let pageToken: string | undefined;
-    let pages = 0;
-    do {
-      const body: any = { ancestorName: `items/${this.folderId}`, filter: "detail.action_detail_case:(CREATE MOVE)", pageSize: 100 };
-      if (pageToken) body.pageToken = pageToken;
-      const r = await json<any>("https://driveactivity.googleapis.com/v2/activity:query", {
-        label: "drive activity",
-        method: "POST",
-        headers: { ...this.h(), "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      for (const act of r.activities ?? []) {
-        const time: string | undefined = act.timestamp ?? act.timeRange?.endTime;
-        if (!time) continue;
-        for (const action of act.actions ?? [act.primaryActionDetail ? { detail: act.primaryActionDetail } : null].filter(Boolean)) {
-          const d = action.detail ?? {};
-          let entered = false;
-          if (d.create) entered = true;
-          if (d.move) entered = (d.move.addedParents ?? []).some((p: any) => p?.driveItem?.name === `items/${this.folderId}`);
-          if (!entered) continue;
-          const targets = action.target ? [action.target] : act.targets ?? [];
-          const t = action.timestamp ?? time;
-          for (const tg of targets) {
-            const name: string | undefined = tg?.driveItem?.name;
-            if (!name?.startsWith("items/")) continue;
-            const id = name.slice(6);
-            if (id === this.folderId) continue;
-            const prev = result.get(id);
-            if (!prev || t > prev) result.set(id, t);
-          }
-        }
-      }
-      pageToken = r.nextPageToken;
-      pages++;
-    } while (pageToken && pages < 50);
-    return result;
   }
 
   /** Is the file still directly in the folder and not trashed? */
@@ -200,26 +192,23 @@ export class Drive {
     if (!res.ok || !res.body) throw new HttpStatusError(res.status, "download failed", "drive download");
     await pipeline(Readable.fromWeb(res.body as any), createWriteStream(dest));
   }
-}
 
-/** Sync folder-entry knowledge into the state store. Exact activity times beat observation, which beats createdTime. */
-export async function syncEntryTimes(drive: Drive, state: StateClient, videos: FolderVideo[], known: Map<string, { entrySource: EntrySource | null }>) {
-  const notes: string[] = [];
-  let activity = new Map<string, string>();
-  try {
-    activity = await drive.folderEntryTimes();
-  } catch (e) {
-    notes.push(`Drive Activity API unavailable (${(e as Error).message.slice(0, 120)}); entry times fall back to first observation / createdTime approximation.`);
-  }
-  const items = videos.map((v) => {
-    const at = activity.get(v.id);
-    if (at) return { fileId: v.id, name: v.name, enteredFolderAt: at, entrySource: "drive_activity" as EntrySource };
-    if (!known.has(v.id)) {
-      // First time we see a file without activity history: record createdTime as a labelled approximation.
-      return { fileId: v.id, name: v.name, enteredFolderAt: v.createdTime, entrySource: "created_time_approximation" as EntrySource };
+  /** Atomically move a confirmed source, then verify both parents before clearing checkpoints. */
+  async archive(fileId: string): Promise<void> {
+    const source = await this.metadata(fileId);
+    if (source.trashed) throw new Error("Source is trashed; cannot confirm archival");
+    const destination = await this.publishedFolder((source.parents ?? []).includes(this.folderId));
+    if (!destination) throw new Error("Published videos folder is unavailable; source checkpoints retained");
+    if (!(source.parents ?? []).includes(this.folderId)) {
+      if ((source.parents ?? []).includes(destination.id)) return; // response lost on an earlier move
+      throw new Error("Source is no longer in the input folder and is not in Published videos; checkpoints retained");
     }
-    return { fileId: v.id, name: v.name, enteredFolderAt: null, entrySource: "created_time_approximation" as EntrySource };
-  });
-  if (items.length) await state.observe(items.filter((i) => i.enteredFolderAt !== null || !known.has(i.fileId)));
-  return { notes, exactCount: [...activity.keys()].filter((k) => videos.some((v) => v.id === k)).length };
+    if (!source.capabilities?.canMoveItemWithinDrive || !destination.capabilities?.canAddChildren) throw new Error("Drive identity cannot move this source to Published videos. Grant Editor access to the source/archive folders, or configure GOOGLE_DRIVE_* OAuth credentials with move permission.");
+    const params = new URLSearchParams({ addParents: destination.id, removeParents: this.folderId, fields: "id,parents,trashed", supportsAllDrives: "true" });
+    await json(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params}`, {
+      label: "drive archive confirmed source", method: "PATCH", headers: { ...this.h(), "content-type": "application/json" }, body: "{}",
+    });
+    const moved = await this.metadata(fileId);
+    if (moved.trashed || !(moved.parents ?? []).includes(destination.id) || (moved.parents ?? []).includes(this.folderId)) throw new Error("Drive did not confirm the move to Published videos; checkpoints retained");
+  }
 }
