@@ -6,10 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       run_mode:
-        description: "manual_now = disable automation and publish one video now. automated = save & enable the weekly schedule (publishes at the next scheduled time, not now)."
+        description: "manual_now = publish one video now (choose below whether to keep or stop automation). automated = replace & enable the weekly schedule; next future slot, not now."
         type: choice
         required: true
         options: [manual_now, automated]
+      manual_schedule_action:
+        description: "Manual now only: keep_schedule leaves existing automation/settings unchanged (default); stop_schedule disables it before this upload. Ignored for automated."
+        type: choice
+        required: true
+        default: keep_schedule
+        options: [keep_schedule, stop_schedule]
       video_selection:
         description: "fifo/lifo = oldest/newest upload date. random = random eligible video. custom = use the filename below (one run / next occurrence only)."
         type: choice
@@ -65,6 +71,7 @@ jobs:
         run: npx tsx runner/src/main.ts configure
         env:
           RUN_MODE: ${{ inputs.run_mode }}
+          MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
           VIDEO_SELECTION: ${{ inputs.video_selection }}
           CUSTOM_VIDEO_NAME: ${{ inputs.custom_video_name }}
           SCHEDULE_TEXT: ${{ inputs.schedule }}

@@ -139,3 +139,13 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 | Upload-Post (YouTube) | free plan, 10 uploads/month, no card |
 | Buffer | your existing plan; the API is included on all plans (free: 3,000 requests/30 days; we poll once per minute, ≤20 per post) |
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |
+
+
+## Updating manual schedule controls
+
+Deploy the updated Worker from the tested feature branch before merging the new form into `main`.
+The Worker accepts old manual callers with their original stop-automation behavior, while the new form
+explicitly sends Keep/Stop to a separate `/api/config/manual-choice` endpoint. If the new form reaches an
+older Worker, it fails without changing the schedule; it cannot silently fall back to stopping automation.
+No database migration is needed. After merging, run Tools → verify/status; these checks do not publish
+or change the saved automation state. The manual form defaults to `keep_schedule`.

@@ -81,6 +81,9 @@ export async function route(req: Request, env: Env): Promise<Response> {
   switch (p) {
     case "/api/config/manual":
       return json(await configureManual(db, b, now));
+    case "/api/config/manual-choice":
+      if (b.scheduleBehavior !== "keep" && b.scheduleBehavior !== "stop") throw new HttpError(400, "manual schedule choice required");
+      return json(await configureManual(db, b, now));
     case "/api/config/automated":
       return json(await configureAutomated(db, b, now));
     case "/api/config/outros":

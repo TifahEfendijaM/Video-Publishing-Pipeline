@@ -21,8 +21,9 @@ export class StateClient {
   target() {
     return this.call("GET", "/api/target");
   }
-  configureManual(b: { selectionPolicy: SelectionPolicy | null; actor: string }) {
-    return this.call("POST", "/api/config/manual", b);
+  configureManual(b: { selectionPolicy: SelectionPolicy | null; scheduleBehavior: "keep" | "stop"; actor: string }) {
+    // A separate route prevents an older Worker from silently ignoring Keep and stopping automation.
+    return this.call("POST", "/api/config/manual-choice", b);
   }
   configureAutomated(b: { scheduleText: string | null; selectionPolicy: SelectionPolicy | null; pendingCustom: { fileId: string; fileName: string } | null; actor: string }) {
     return this.call("POST", "/api/config/automated", b);

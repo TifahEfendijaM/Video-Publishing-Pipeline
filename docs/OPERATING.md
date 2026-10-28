@@ -8,10 +8,11 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 
 | Field | Choices | Meaning |
 |---|---|---|
-| `run_mode` | `manual_now` | 1) turns automation **off** first (the saved schedule is kept for later), 2) picks one video, 3) publishes it now. Nothing else is planned. |
+| `run_mode` | `manual_now` | Picks one video and publishes it now. By default the existing schedule is kept; choose `stop_schedule` below to disable automation first. |
 | | `automated` | Saves and enables the weekly schedule. **Does not publish now**; the next video goes out at the first future occurrence. Re-submitting replaces the settings (there is only ever one schedule). |
-| `video_selection` | `fifo` / `lifo` | Oldest / newest video by its Drive upload/creation date. Saved as the policy for future scheduled runs. |
-| | `random` | Picks one eligible source video uniformly at random; saved for future scheduled runs. |
+| `manual_schedule_action` | `keep_schedule` (default) / `stop_schedule` | Manual only: keep leaves schedule/settings untouched; stop disables automation and clears the pending scheduled custom override while retaining the saved timetable and automatic selection policy. Ignored for Automated. |
+| `video_selection` | `fifo` / `lifo` | Oldest / newest video by its Drive upload/creation date. Automated saves the policy; manual uses it for this upload only. |
+| | `random` | Picks one eligible source video uniformly at random. Automated saves the policy; manual uses it for this upload only. |
 | | `custom` | Uses `custom_video_name` once: in `manual_now` immediately; in `automated` for the next occurrence only. Does not change the saved FIFO/LIFO/random policy. |
 | `custom_video_name` | text | Complete filename including extension. Empty / not found / duplicated name → the saved policy is used and the summary says why. |
 | `schedule` | text | Weekly days + times in Europe/Sarajevo (automated only). Empty keeps the last saved schedule; initial default Friday 05:00. |
@@ -33,6 +34,21 @@ The dropdowns are static — they don't show your saved settings. To see those, 
   configure them). They can still be selected deliberately with `custom`.
 - If an outro file is deleted or moved out of the folder, that platform is published without it and the
   summary says so. Changing outros never cancels an already-planned scheduled run.
+
+### How manual uploads affect a schedule
+
+`keep_schedule` leaves automation in its current state: an enabled schedule stays enabled, and a disabled
+schedule stays disabled. The manual video's selection and outro choices apply only to that upload.
+Saved times, FIFO/LIFO/Random policy, pending scheduled custom video and configuration version are unchanged;
+queued and running scheduled occurrences remain valid. The manual video still leaves the source queue
+once archived, so a later scheduled occurrence chooses from the remaining files.
+
+`stop_schedule` disables automation before uploading, cancels pending scheduled custom selection and
+invalidates older queued occurrences. The timetable and saved automatic selection policy are retained.
+Re-enable them with Automated later. Posts already submitted to a platform cannot necessarily be recalled.
+
+Automated always replaces the single saved schedule configuration; it ignores `manual_schedule_action`.
+Blank schedule text retains the saved timetable. It does not add a second independent schedule.
 
 ## Schedule syntax
 
@@ -88,8 +104,9 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
   A retry targeting an old run will not resend a destination that succeeded in a later retry.
   **Uncertain** (e.g. a response lost after the publish request) is never retried
   automatically: check the account, then `resolve_publication`.
-- Scheduled runs that were queued before you changed settings (or chose `manual_now`) detect it and stop
-  without publishing. The kill switch is re-checked immediately before each live publication step.
+- Scheduled runs queued before you replaced automated settings or chose manual `stop_schedule` detect
+  the change and stop before publishing. Manual `keep_schedule` leaves those runs valid. The kill switch
+  is re-checked immediately before each live publication step.
 
 ## Upload dates and the Published videos folder
 

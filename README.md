@@ -11,6 +11,9 @@ upload dates, Random picks an eligible source, and Custom matches a filename. Pa
 stay protected from duplicates, and outro assets remain in place. The old consumed-video/entry-time table
 is removed. [Archive access and migration setup](docs/SETUP.md#drive-access-for-automatic-archival).
 
+Manual uploads default to **Keep schedule**; the optional **Stop schedule** choice disables automation
+before the one-off upload. Manual selections do not replace the saved scheduled selection policy.
+
 ```
 Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner)
   ├─ reads saved Sarajevo schedule from D1           ├─ checks claim / kill switch / staleness

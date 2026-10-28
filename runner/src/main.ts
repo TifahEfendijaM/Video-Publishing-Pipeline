@@ -426,33 +426,37 @@ async function cmdConfigure() {
 
   s.h(1, `EasyBosnian video — ${mode}`);
   if (mode === "manual_now") {
+    const scheduleAction = env("MANUAL_SCHEDULE_ACTION") || "keep_schedule";
+    if (!["keep_schedule", "stop_schedule"].includes(scheduleAction)) throw new Error("manual_schedule_action must be keep_schedule or stop_schedule");
+    const scheduleBehavior = scheduleAction === "keep_schedule" ? "keep" : "stop";
     const ignored: string[] = [];
     if (scheduleText.trim()) ignored.push("schedule (only used in automated mode)");
     if (selection !== "custom" && customName.trim()) ignored.push("custom_video_name (only used when video_selection = custom)");
-    // 1) disable automation FIRST (retaining the saved schedule), 2) select, 3) publish now.
-    const cfgView = await state.configureManual({ selectionPolicy: policyChoice, actor });
+    const cfgView = await state.configureManual({ selectionPolicy: policyChoice, scheduleBehavior, actor });
+    if (cfgView.manualScheduleBehavior !== scheduleBehavior) throw new Error("Worker does not support this manual schedule choice; deploy the updated Worker before publishing");
     const { notes: outroNotes, changes: outroOverrides } = await applyOutros(false);
     const begin = await state.beginRun({ origin: "manual", githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
     s.kv([
       ["Origin", "manual (manual_now)"],
       ["Started", new Date().toISOString()],
       ["Run ID", begin.runId],
+      ["Existing schedule", scheduleBehavior === "keep" ? "Kept unchanged; manual video selection is for this upload only" : "Automation stopped before this upload; saved timetable retained"],
       ["Ignored fields", ignored.join("; ") || "none"],
     ]);
     if (outroNotes.length) s.list(outroNotes);
-    s.h(2, "Saved configuration (automation disabled before publishing)");
+    s.h(2, scheduleBehavior === "keep" ? "Saved configuration (schedule kept unchanged)" : "Saved configuration (automation stopped before publishing)");
     s.kv(settingsRows(cfgView.settings, cfgView.nextOccurrences));
     try {
       const status = await publishFlow({
         runId: begin.runId!,
         origin: "manual",
-        policy: cfgView.settings.selectionPolicy,
+        policy: policyChoice ?? cfgView.settings.selectionPolicy,
         customName: selection === "custom" ? customName : null,
         outroOverrides,
         summary: s,
         state,
       });
-      s.p(`Run result: **${status}**. No further automatic publication is planned.`);
+      s.p(`Run result: **${status}**. ${scheduleBehavior === "stop" ? "Scheduled automation is stopped." : cfgView.settings.automationEnabled ? "The existing schedule remains enabled." : "The existing schedule remains disabled."}`);
     } catch (e) {
       s.p(`Run failed before completion: ${summarizeError(e)}`);
       await state.finishRun({ runId: begin.runId!, status: "error" }).catch(() => {});
@@ -478,6 +482,7 @@ async function cmdConfigure() {
   }
   let pending: { fileId: string; fileName: string } | null = null;
   const notes: string[] = [];
+  notes.push("manual_schedule_action ignored: it only applies to manual_now. Automated configuration replaces the saved schedule and settings.");
   if (selection === "custom") {
     if (!customName.trim()) notes.push("Custom selected but the filename was empty: the saved FIFO/LIFO/random policy will be used.");
     else {

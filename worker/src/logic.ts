@@ -131,11 +131,19 @@ export async function stateView(db: Db, nowMs: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Configuration changes (each bumps config_version, which invalidates queued/stale scheduled runs)
+// Configuration updates bump config_version; keep-schedule manual uploads leave settings unchanged.
 
-export async function configureManual(db: Db, req: { selectionPolicy?: SelectionPolicy | null; actor?: string }, nowMs: number) {
+export async function configureManual(db: Db, req: { selectionPolicy?: SelectionPolicy | null; scheduleBehavior?: "keep" | "stop"; actor?: string }, nowMs: number) {
   const policy = req.selectionPolicy ?? null;
   if (policy !== null && policy !== "fifo" && policy !== "lifo" && policy !== "random") throw new HttpError(400, "invalid selection policy");
+  // Legacy callers omitted this field and explicitly used manual_now to stop automation.
+  const behavior = req.scheduleBehavior ?? "stop";
+  if (behavior !== "keep" && behavior !== "stop") throw new HttpError(400, "invalid manual schedule behavior");
+  if (behavior === "keep") {
+    // Do not bump the version or touch settings: existing scheduled claims and custom overrides stay valid.
+    await log(db, "manual_now.keep_schedule", { selectionPolicy: policy, actor: req.actor ?? null }, nowMs);
+    return { ...(await stateView(db, nowMs)), manualScheduleBehavior: behavior };
+  }
   // Disable automation FIRST and keep the saved schedule; clear any pending custom override.
   await db
     .prepare(
@@ -143,10 +151,11 @@ export async function configureManual(db: Db, req: { selectionPolicy?: Selection
          pending_custom_file_id = NULL, pending_custom_file_name = NULL, pending_custom_config_version = NULL,
          config_version = config_version + 1, updated_at = ?, updated_by = ? WHERE id = 1`,
     )
-    .bind(policy, iso(nowMs), req.actor ?? "manual_now")
+    // New manual selections are one-off; preserve the old API's saved-policy behavior for legacy callers.
+    .bind(req.scheduleBehavior === undefined ? policy : null, iso(nowMs), req.actor ?? "manual_now")
     .run();
-  await log(db, "config.manual_now", { selectionPolicy: policy, actor: req.actor ?? null }, nowMs);
-  return stateView(db, nowMs);
+  await log(db, "config.manual_now", { selectionPolicy: policy, scheduleBehavior: behavior, actor: req.actor ?? null }, nowMs);
+  return { ...(await stateView(db, nowMs)), manualScheduleBehavior: behavior };
 }
 
 export async function configureAutomated(
