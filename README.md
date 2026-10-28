@@ -5,15 +5,16 @@ Instagram (Reel + Story), Facebook (Reel or Page video + Story), TikTok (video p
 YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), on a weekly Europe/Sarajevo schedule or on demand.
 Separate from the image-card pipeline: no shared code, Worker, database or credentials.
 
-The Drive folder is the publishing queue: confirmed sources move to recoverable Drive Trash, then their
-temporary recovery checkpoints are cleared. FIFO/LIFO/custom selects from what remains; partial/pending
-uploads are protected from duplicate publishing. Outro assets are preserved. My Drive cleanup requires
-[Drive owner OAuth and a Worker update](docs/SETUP.md#drive-owner-authorization-for-automatic-cleanup).
+The source Drive folder is the publishing queue: confirmed sources move into **Published videos**,
+then their temporary recovery checkpoints and saved file references are cleared. FIFO/LIFO uses Drive
+upload dates, Random picks an eligible source, and Custom matches a filename. Partial/pending uploads
+stay protected from duplicates, and outro assets remain in place. The old consumed-video/entry-time table
+is removed. [Archive access and migration setup](docs/SETUP.md#drive-access-for-automatic-archival).
 
 ```
 Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner)
   ├─ reads saved Sarajevo schedule from D1           ├─ checks claim / kill switch / staleness
-  ├─ due? → atomic claim of the occurrence           ├─ Drive: list folder, entry times, download once
+  ├─ due? → atomic claim of the occurrence           ├─ Drive: list folder, upload dates, download once
   └─ workflow_dispatch → scheduled-publish.yml ───▶  ├─ ffprobe → format plan; ffmpeg Story canvas
       (exact repo, workflow, branch; 1 attempt)      ├─ captions (generic, or free Workers AI, validated)
                                                      ├─ Meta Graph · Buffer (TikTok, Shorts) · Upload-Post (YT video)

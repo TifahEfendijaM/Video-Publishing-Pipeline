@@ -2,8 +2,9 @@
   "_comment": "Non-secret pipeline configuration. Expected identities are verified before any publication; an empty value blocks that destination (status: disabled) until it is filled in.",
   "driveFolderId": "1URObW4ZZtviogsPodnU24mzc2x2eExev",
   "driveFolderName": "EasyBosnian educational videos",
+  "publishedFolderName": "Published videos",
+  "publishedFolderId": "",
   "timeZone": "Europe/Sarajevo",
-  "editedFilePolicy": "same_video",
   "destinations": {
     "instagram": {
       "enabled": true,

@@ -51,6 +51,7 @@ jobs:
           CLAIM_TOKEN: ${{ inputs.claim_token }}
           DISPATCH_MODE: ${{ inputs.mode }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
+          PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           STATE_API_TOKEN: ${{ secrets.STATE_API_TOKEN }}

@@ -2,7 +2,7 @@
 
 ## The "Publish video" form (Actions → Publish video → Run workflow)
 
-GitHub shows all four fields every time; fields that don't apply are ignored and the summary says so.
+GitHub shows all form fields every time; fields that don't apply are ignored and the summary says so.
 The dropdowns are static — they don't show your saved settings. To see those, run **Tools → status**
 (or read the summary of any run).
 
@@ -10,8 +10,9 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 |---|---|---|
 | `run_mode` | `manual_now` | 1) turns automation **off** first (the saved schedule is kept for later), 2) picks one video, 3) publishes it now. Nothing else is planned. |
 | | `automated` | Saves and enables the weekly schedule. **Does not publish now**; the next video goes out at the first future occurrence. Re-submitting replaces the settings (there is only ever one schedule). |
-| `video_selection` | `fifo` / `lifo` | Oldest / newest video by the time it entered the Drive folder. Saved as the policy for future scheduled runs. |
-| | `custom` | Uses `custom_video_name` once: in `manual_now` immediately; in `automated` for the next occurrence only. Does not change the saved FIFO/LIFO policy. |
+| `video_selection` | `fifo` / `lifo` | Oldest / newest video by its Drive upload/creation date. Saved as the policy for future scheduled runs. |
+| | `random` | Picks one eligible source video uniformly at random; saved for future scheduled runs. |
+| | `custom` | Uses `custom_video_name` once: in `manual_now` immediately; in `automated` for the next occurrence only. Does not change the saved FIFO/LIFO/random policy. |
 | `custom_video_name` | text | Complete filename including extension. Empty / not found / duplicated name → the saved policy is used and the summary says why. |
 | `schedule` | text | Weekly days + times in Europe/Sarajevo (automated only). Empty keeps the last saved schedule; initial default Friday 05:00. |
 
@@ -27,7 +28,7 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 - The outro is appended to the end of the main post (YouTube video and Short, TikTok video, Instagram Reel,
   Facebook video). Stories are posted without outros. The joined file keeps the main video's frame size;
   an outro of a different shape is fitted inside it with black bars, and a silent clip gets silence.
-- Outro clips are never chosen by FIFO/LIFO: neither the configured outro files nor **any file whose name
+- Outro clips are never chosen by FIFO/LIFO/Random: neither the configured outro files nor **any file whose name
   contains "outro"** (name your outro clips e.g. `outro_youtube.mp4` so they are excluded even before you
   configure them). They can still be selected deliberately with `custom`.
 - If an outro file is deleted or moved out of the folder, that platform is published without it and the
@@ -38,7 +39,9 @@ The dropdowns are static — they don't show your saved settings. To see those, 
 Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically).
 
 - Practical: `tuesday-5pm monday-6am friday 9-pm` → `Mon 06:00; Tue 17:00; Fri 21:00`
-- Canonical: `Tue 17:00; Mon 06:00; Fri 21:00`
+- Recommended format: `Mon 06:00; Wed 17:00; Fri 21:00` (24-hour clock).
+- In the form select `run_mode = automated`; this saves the schedule and publishes at the next future slot.
+  A blank schedule keeps the saved schedule; the initial default is `Fri 05:00`.
 - Also accepted: `fri 5 a.m.`, `wed 19.30`, `mon 0600`, `tue 17h`, `noon`, `midnight`, `mon wed 5pm`
   (both days 17:00), `mon 6am 6pm` (two times), Bosnian day names (`petak 05:00`).
 - Rejected with an explanation (old settings kept): `friday 9` (am or pm?), `5pm` (no day), `fri 13pm`,
@@ -62,19 +65,22 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 
 ## How videos advance, and failures
 
-- The live Drive folder is the queue. FIFO/LIFO chooses the oldest/newest remaining source by folder-entry
-  time; custom chooses a filename. The old permanent `consumed` flag is ignored.
-- After every supported destination confirms publication, the source goes to **Drive Trash**, and its
-  temporary publication checkpoints and folder-entry record are cleared. Unsupported/manual-only surfaces
+- The live source folder is the queue. FIFO/LIFO chooses by Drive upload/creation date; Random chooses
+  uniformly from eligible sources; Custom chooses a filename. No permanent consumed-video table is used.
+- After every supported destination confirms publication, the source moves into **Published videos**,
+  and its temporary publication checkpoints and saved file references in run records are cleared.
+  Unsupported/manual-only surfaces
   (such as TikTok Stories) do not block cleanup; there must be at least one confirmed publication.
   Outro clips (by name or saved/configured ID) are retained.
 - Processing, uncertain, failed or skipped destinations prevent cleanup. If any destination may already be
   live, its source is temporarily excluded from automatic **and custom** publication to prevent duplicates.
   Other queued videos can advance. Recovery tools use per-destination checkpoints, rather than a permanent
-  publishing-history cursor. Recent run summaries remain available for troubleshooting.
+  publishing-history cursor. Scheduler/run statuses remain for troubleshooting, with archived file details cleared.
 - Cleanup failure is reported in the summary. The confirmed video cannot be re-uploaded accidentally;
   cleanup is retried before the next publishing run or via **Tools → reconcile**, even if there are no open
-  publications. Reconcile and manual resolution also clean up sources whose last pending destination confirms.
+  publications. Reconcile and manual resolution also archive sources whose last pending destination confirms.
+  If the move succeeded but checkpoint deletion failed, a later publishing run/reconcile clears those
+  records after finding the source in the archive; the video is never re-uploaded.
 - When no eligible source remains, the run reports **"No eligible videos available."** and publishes nothing.
 - Every destination is attempted independently. Facebook failing doesn't stop Instagram, TikTok or YouTube.
 - **Failed** means nothing was published there; `retry_failed` re-attempts only those, never the ones
@@ -85,12 +91,18 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 - Scheduled runs that were queued before you changed settings (or chose `manual_now`) detect it and stop
   without publishing. The kill switch is re-checked immediately before each live publication step.
 
-## Folder-entry times (FIFO/LIFO)
+## Upload dates and the Published videos folder
 
-Ordering uses the time a file was uploaded or moved into the folder, from the **Drive Activity API**
-(create/upload/move-into events). Drive's `createdTime` is *not* folder-entry time; it is used only when
-no activity record exists, and is labelled "created time approximation" in summaries. Ties are broken by
-Drive file ID.
+FIFO/LIFO reads each file's `createdTime` directly from Drive. Renaming, modifying or moving an old
+file into the source folder does not change that original creation date. Equal dates are broken by file ID.
+No Drive Activity API or stored folder-entry timestamps are needed.
+
+By default, the pipeline finds or creates a **Published videos** child folder inside the source folder.
+Only direct video children of the source folder are candidates, so archived videos are excluded.
+To use a separate existing folder, set the GitHub repository variable `PUBLISHED_DRIVE_FOLDER_ID`
+(or `publishedFolderId` in `config/pipeline.json`). It must differ from the source folder.
+Duplicate default archive names require an explicit folder ID. Verify/preview never create folders or move files.
+The move updates the file's parent and preserves its Drive ID; it never trashes or permanently deletes a file.
 
 ## YouTube: a Short AND a regular video for every clip
 
@@ -116,7 +128,7 @@ Every file in Google Drive has a permanent ID (the long code in its link, e.g.
 "Manage versions", keeps the ID; uploading a separate copy creates a new ID. The pipeline tracks videos by
 this ID while publication or cleanup is pending; renaming or replacing content does not bypass those
 recovery checkpoints. Once the confirmed source is removed and checkpoints are cleared, a newly uploaded
-copy (or a source deliberately restored to the folder) is eligible again according to FIFO/LIFO/custom.
+copy (or a source deliberately restored to the folder) is eligible again according to FIFO/LIFO/Random/Custom.
 
 ## Captions (English)
 

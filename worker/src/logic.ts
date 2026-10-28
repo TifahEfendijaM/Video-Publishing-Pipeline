@@ -1,3 +1,4 @@
+import type { SelectionPolicy } from "../../src/shared/selection";
 // Scheduler + state logic. Runs inside the Cloudflare Worker against D1; tests run it against node:sqlite.
 import {
   DEFAULT_SCHEDULE,
@@ -52,7 +53,7 @@ export interface Settings {
   scheduleEffective: Slot[];
   scheduleText: string;
   scheduleIsDefault: boolean;
-  selectionPolicy: "fifo" | "lifo";
+  selectionPolicy: SelectionPolicy;
   pendingCustom: { fileId: string; fileName: string | null; configVersion: number } | null;
   outros: Outros;
   publishingEnabled: boolean;
@@ -132,9 +133,9 @@ export async function stateView(db: Db, nowMs: number) {
 // ---------------------------------------------------------------------------
 // Configuration changes (each bumps config_version, which invalidates queued/stale scheduled runs)
 
-export async function configureManual(db: Db, req: { selectionPolicy?: "fifo" | "lifo" | null; actor?: string }, nowMs: number) {
+export async function configureManual(db: Db, req: { selectionPolicy?: SelectionPolicy | null; actor?: string }, nowMs: number) {
   const policy = req.selectionPolicy ?? null;
-  if (policy !== null && policy !== "fifo" && policy !== "lifo") throw new HttpError(400, "invalid selection policy");
+  if (policy !== null && policy !== "fifo" && policy !== "lifo" && policy !== "random") throw new HttpError(400, "invalid selection policy");
   // Disable automation FIRST and keep the saved schedule; clear any pending custom override.
   await db
     .prepare(
@@ -152,7 +153,7 @@ export async function configureAutomated(
   db: Db,
   req: {
     scheduleText?: string | null;
-    selectionPolicy?: "fifo" | "lifo" | null;
+    selectionPolicy?: SelectionPolicy | null;
     pendingCustom?: { fileId: string; fileName: string } | null;
     actor?: string;
   },
@@ -166,7 +167,7 @@ export async function configureAutomated(
     throw e;
   }
   const policy = req.selectionPolicy ?? null;
-  if (policy !== null && policy !== "fifo" && policy !== "lifo") throw new HttpError(400, "invalid selection policy");
+  if (policy !== null && policy !== "fifo" && policy !== "lifo" && policy !== "random") throw new HttpError(400, "invalid selection policy");
   const current = await getSettings(db);
   const slots = parsed ?? current.scheduleSaved ?? DEFAULT_SCHEDULE; // blank keeps the last saved schedule
   const custom = req.pendingCustom ?? null;
@@ -360,45 +361,15 @@ export async function finishRun(db: Db, req: { runId: string; status: string; se
 }
 
 // ---------------------------------------------------------------------------
-// Videos / publication history
-
-export async function listVideos(db: Db) {
-  return (await db.prepare("SELECT * FROM videos").all()).results;
-}
-
-const SOURCE_RANK: Record<string, number> = { created_time_approximation: 0, observed: 1, drive_activity: 2 };
-
-export async function observeVideos(db: Db, items: { fileId: string; name: string; enteredFolderAt: string | null; entrySource: string }[], nowMs: number) {
-  for (const it of items) {
-    if (!(it.entrySource in SOURCE_RANK)) throw new HttpError(400, "invalid entry source");
-    const cur = await db.prepare("SELECT * FROM videos WHERE file_id = ?").bind(it.fileId).first<Record<string, any>>();
-    if (!cur) {
-      await db.prepare("INSERT INTO videos (file_id, last_known_name, entered_folder_at, entry_source, first_observed_at) VALUES (?, ?, ?, ?, ?)").bind(it.fileId, it.name, it.enteredFolderAt, it.entrySource, iso(nowMs)).run();
-      continue;
-    }
-    const better = (SOURCE_RANK[it.entrySource] ?? -1) > (SOURCE_RANK[cur.entry_source] ?? -1);
-    const newerActivity = it.entrySource === "drive_activity" && cur.entry_source === "drive_activity" && it.enteredFolderAt && it.enteredFolderAt > cur.entered_folder_at;
-    if (better || newerActivity) {
-      await db.prepare("UPDATE videos SET entered_folder_at = ?, entry_source = ?, last_known_name = ? WHERE file_id = ?").bind(it.enteredFolderAt, it.entrySource, it.name, it.fileId).run();
-    } else {
-      await db.prepare("UPDATE videos SET last_known_name = ? WHERE file_id = ?").bind(it.name, it.fileId).run();
-    }
-  }
-  return { ok: true, count: items.length };
-}
-
-export async function consumeVideo(db: Db, req: { fileId: string; runId: string; md5: string | null }, nowMs: number) {
-  await db.prepare("UPDATE videos SET consumed = 1, consumed_at = COALESCE(consumed_at, ?), consumed_run_id = COALESCE(consumed_run_id, ?), md5_at_publication = COALESCE(?, md5_at_publication) WHERE file_id = ?").bind(iso(nowMs), req.runId, req.md5, req.fileId).run();
-  return { ok: true };
-}
+// Temporary publication recovery checkpoints
 
 const STATUSES = new Set(["initiated", "processing", "confirmed", "failed", "uncertain", "unsupported", "disabled"]);
 
 /** Called only after Drive confirms source removal. These rows are recovery state, not a cursor. */
 export async function completeVideo(db: Db, fileId: string) {
   if (!fileId) throw new HttpError(400, "fileId required");
+  await db.prepare("UPDATE runs SET selected_file_id = NULL, selected_file_name = NULL, selection_note = NULL WHERE selected_file_id = ?").bind(fileId).run();
   await db.prepare("DELETE FROM publications WHERE file_id = ?").bind(fileId).run();
-  await db.prepare("DELETE FROM videos WHERE file_id = ?").bind(fileId).run();
   return { ok: true };
 }
 

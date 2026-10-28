@@ -4,8 +4,9 @@ import { registerSecret } from "../../src/shared/redact";
 export interface PipelineConfig {
   driveFolderId: string;
   driveFolderName: string;
+  publishedFolderId?: string;
+  publishedFolderName?: string;
   timeZone: string;
-  editedFilePolicy: "same_video";
   destinations: {
     instagram: { enabled: boolean; provider: "meta_graph"; expectedUserId: string; expectedUsername: string; reel: boolean; story: boolean };
     facebook: { enabled: boolean; provider: "meta_graph"; expectedPageId: string; expectedPageName: string; story: boolean };

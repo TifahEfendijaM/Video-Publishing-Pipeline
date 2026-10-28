@@ -1,4 +1,5 @@
 // Client for the Worker's authenticated state API (D1 is the single source of truth).
+import type { SelectionPolicy } from "../../src/shared/selection";
 import { json } from "./http";
 
 export class StateClient {
@@ -20,10 +21,10 @@ export class StateClient {
   target() {
     return this.call("GET", "/api/target");
   }
-  configureManual(b: { selectionPolicy: "fifo" | "lifo" | null; actor: string }) {
+  configureManual(b: { selectionPolicy: SelectionPolicy | null; actor: string }) {
     return this.call("POST", "/api/config/manual", b);
   }
-  configureAutomated(b: { scheduleText: string | null; selectionPolicy: "fifo" | "lifo" | null; pendingCustom: { fileId: string; fileName: string } | null; actor: string }) {
+  configureAutomated(b: { scheduleText: string | null; selectionPolicy: SelectionPolicy | null; pendingCustom: { fileId: string; fileName: string } | null; actor: string }) {
     return this.call("POST", "/api/config/automated", b);
   }
   setOutros(changes: Record<string, { fileId: string; fileName: string } | null>, actor: string) {
@@ -44,17 +45,11 @@ export class StateClient {
   finishRun(b: { runId: string; status: string; selectedFileId?: string; selectedFileName?: string; selectionMethod?: string; selectionNote?: string }) {
     return this.call("POST", "/api/run/finish", b);
   }
-  videos() {
-    return this.call<{ videos: any[] }>("GET", "/api/videos");
-  }
-  observe(items: { fileId: string; name: string; enteredFolderAt: string | null; entrySource: string }[]) {
-    return this.call("POST", "/api/videos/observe", { items });
-  }
-  consumeVideo(b: { fileId: string; runId: string; md5: string | null }) {
-    return this.call("POST", "/api/videos/consume", b);
-  }
   completeVideo(fileId: string) {
     return this.call("POST", "/api/videos/complete", { fileId });
+  }
+  checkpointFiles() {
+    return this.call<{ fileIds: string[] }>("GET", "/api/publications/files");
   }
   upsertPublication(p: { runId: string; fileId: string; platform: string; surface: string; provider?: string; format?: string; status: string; remoteId?: string | null; url?: string | null; detail?: string | null }) {
     return this.call("POST", "/api/publications/upsert", p);

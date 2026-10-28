@@ -28,14 +28,27 @@ export function confirmedForCleanup(rows: PublicationCheckpoint[]): boolean {
 
 export interface QueueDeps {
   publications(fileId: string): Promise<PublicationCheckpoint[]>;
-  trash(fileId: string): Promise<void>;
+  archive(fileId: string): Promise<void>;
   complete(fileId: string): Promise<unknown>;
+}
+
+/** A move may succeed before the state API responds. Finish that cleanup on a later run. */
+export async function completeArchived(archivedIds: Set<string>, checkpointIds: string[], deps: QueueDeps): Promise<number> {
+  let completed = 0;
+  for (const id of checkpointIds) {
+    if (archivedIds.has(id) && confirmedForCleanup(await deps.publications(id))) {
+      await deps.complete(id);
+      completed++;
+    }
+  }
+  return completed;
 }
 
 /** Retry cleanup without republishing; retain partial/pending sources for explicit recovery. */
 export async function maintainQueue(videos: FolderVideo[], protectedIds: Set<string>, deps: QueueDeps, preview = false) {
   const blockedIds = new Set<string>();
   const notes: string[] = [];
+  const archivedIds = new Set<string>();
   for (const v of videos) {
     if (protectedIds.has(v.id) || isOutroName(v.name)) continue;
     // Fail closed on state errors: a missing checkpoint response is not an unpublished video.
@@ -47,9 +60,10 @@ export async function maintainQueue(videos: FolderVideo[], protectedIds: Set<str
         continue;
       }
       try {
-        await deps.trash(v.id);
+        await deps.archive(v.id);
         await deps.complete(v.id);
-        notes.push(`"${v.name}" removed from the source folder to Drive Trash after confirmed publishing; recovery checkpoints cleared.`);
+        archivedIds.add(v.id);
+        notes.push(`"${v.name}" moved from the source folder into Published videos after confirmed publishing; recovery checkpoints cleared.`);
       } catch (e) {
         notes.push(`WARNING: cleanup of "${v.name}" needs attention: ${summarizeError(e, 200)}. It will not be republished; cleanup will be retried on the next publishing run or Tools → reconcile.`);
       }
@@ -58,5 +72,5 @@ export async function maintainQueue(videos: FolderVideo[], protectedIds: Set<str
       notes.push(`"${v.name}" retained for pending/partial publishing; use reconcile, resolve_publication or retry_failed. It will not be republished automatically.`);
     }
   }
-  return { blockedIds, notes };
+  return { blockedIds, archivedIds, notes };
 }
