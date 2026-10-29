@@ -70,6 +70,10 @@ async function cleanupFolder(s: Summary, state: StateClient) {
   const videos = await d.listVideos();
   const saved = (await state.state()).settings.outros ?? {};
   const protectedIds = new Set<string>(Object.values(saved).flatMap((o: any) => o ? [o.fileId] : []));
+  const plan = await state.plan();
+  for (const choices of [plan.outros, ...plan.entries.map(e => e.outros)]) {
+    for (const outro of Object.values(choices)) if (outro) protectedIds.add(outro.fileId);
+  }
   for (const p of ["youtube", "tiktok", "instagram", "facebook"]) {
     const outro = effectiveOutro(saved[p], videos, cfg.outros?.defaultFileName ?? "");
     if (outro) protectedIds.add(outro.fileId);
@@ -188,7 +192,8 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   const d = await drive();
   if (!o.preview) await recoverArchived(d, o.state, s);
   const folder = { videos: await d.listVideos() };
-  const { jobs } = await o.state.jobs();
+  const plan = await o.state.plan();
+  const jobs = plan.entries;
   if (o.job) {
     const fresh = jobs.find((j) => j.id === o.job!.id);
     const gate = await o.state.mayPublish(o.runId);
@@ -209,6 +214,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   );
   const excludeIds = new Set(Object.values(outros).flatMap((x) => (x ? [x.fileId] : [])));
   for (const outro of Object.values(savedOutros)) if (outro) excludeIds.add(outro.fileId);
+  for (const outro of Object.values(plan.outros)) if (outro) excludeIds.add(outro.fileId);
   for (const job of jobs) for (const outro of Object.values(job.outros)) if (outro) excludeIds.add(outro.fileId);
   const queue = await maintainQueue(folder.videos, excludeIds, queueDeps(d, o.state), !!o.preview);
   const candidates = (o.job?.titleRule ?? o.titleRule) ? folder.videos.filter((v) => matchesTitle(v.name, (o.job?.titleRule ?? o.titleRule)!)) : folder.videos;
