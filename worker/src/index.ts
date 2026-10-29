@@ -92,6 +92,7 @@ export async function route(req: Request, env: Env): Promise<Response> {
       throw new HttpError(410, "Use publishing plan Edit; the legacy singleton form is retired");
     case "/api/jobs/change":
       throw new HttpError(410, 'Named job management is retired; use publishing plan Edit/Pause/Resume');
+    case '/api/plan/change-with-outros':
     case '/api/plan/change':
       return json(await changePlan(db, b, now));
     case "/api/jobs/batch":

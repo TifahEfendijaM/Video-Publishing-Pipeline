@@ -1,11 +1,13 @@
 import type { CustomVideo, JobPolicy, TitleRule } from './job-selection';
 import { formatSchedule, parseSchedule } from './schedule';
+export type EntryOutros = Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook', CustomVideo | null>>;
 
 export interface PlanEntryInput {
   scheduleText: string;
   policy: JobPolicy;
   custom: CustomVideo[];
   titleRule: TitleRule | null;
+  outros?: EntryOutros;
 }
 
 /** Identity excludes timetable: moving an unchanged list to another day retains its progress. */
@@ -39,6 +41,12 @@ export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
     if (entry.policy === 'title_rule') {
       if (!rule || !['contains', 'starts_with', 'ends_with'].includes(rule.match) || typeof rule.text !== 'string' || !rule.text.trim() || rule.text.length > 200 || !['fifo', 'lifo', 'random'].includes(rule.order)) throw new Error('Invalid interpreted title rule');
     } else if (rule !== null) throw new Error('Unexpected title filter');
+    if (entry.outros !== undefined) {
+      if (!entry.outros || Array.isArray(entry.outros) || typeof entry.outros !== 'object') throw new Error('Invalid outro choices');
+      for (const [platform, outro] of Object.entries(entry.outros)) {
+        if (!['youtube','tiktok','instagram','facebook'].includes(platform) || (outro !== null && (!outro || !/^[A-Za-z0-9_-]{10,200}$/.test(outro.fileId) || typeof outro.fileName !== 'string' || !outro.fileName.trim() || outro.fileName.length > 300))) throw new Error('Invalid outro choice');
+      }
+    }
     return { ...entry, scheduleText: formatSchedule(schedule) };
   });
 }

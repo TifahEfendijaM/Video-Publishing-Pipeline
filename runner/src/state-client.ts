@@ -19,7 +19,7 @@ export class StateClient {
 
   jobs() { return this.call<{ jobs: (ScheduledJob & { nextOccurrences: { key: string; local: string }[] })[] }>("GET", "/api/jobs"); }
   plan() { return this.call<Awaited<ReturnType<typeof planView>>>('GET','/api/plan'); }
-  changePlan(request: PlanChange) { return this.call<Awaited<ReturnType<typeof planView>>>('POST','/api/plan/change',request); }
+  changePlan(request: PlanChange) { return this.call<Awaited<ReturnType<typeof planView>>>('POST','/api/plan/change-with-outros',request); }
   jobBatch(batchId: string, token: string) { return this.call<{ claims: string[] }>("POST", "/api/jobs/batch", { batchId, token }); }
   state() {
     return this.call("GET", "/api/state");
