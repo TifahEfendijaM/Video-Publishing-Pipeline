@@ -15,7 +15,7 @@ Scheduled mode provides **Edit / Pause / Resume** for one plan. Pair each timeta
 one text field, for example `Mon and Wed 06:00: lifo | Fri 21:00: random`. Ordered Custom lists and
 plain-English title filters work in the same field. The summary shows each rule and every remaining
 Custom filename. Unchanged lists retain progress across edits; Pause/Resume retain the full plan.
-Each timetable can choose its own outro, e.g. `Mon 06:00: lifo; outro: "End.mp4"`; omit it to retain an existing choice or use the default `outro` clip for a new entry. Use `outro: none` to disable it. Manual uploads retain their separate one-off outro fields and default to **Keep schedule**, with an optional **Pause schedule** choice.
+Each timetable can choose its own outro, e.g. `Mon 06:00: lifo; outro: "End.mp4"`; omit it to retain an existing choice or use the default `outro` clip for a new entry. Use `outro: none` to disable it. Manual uploads use one combined entry, e.g. `custom: "Video.mp4"; outro: "End.mp4"`, and default to **Keep schedule**, with an optional **Pause schedule** choice.
 
 ```
 Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner)

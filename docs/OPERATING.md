@@ -12,7 +12,7 @@ plan, which simply reports the saved plan without changing it.
 | `run_mode` | `automated` edits/pauses/resumes the plan, never publishes immediately. `manual_now` publishes one video now. |
 | `plan_action` | `edit` replaces the complete plan when text is supplied; `pause` and `resume` retain its rules and Custom progress. |
 | `publishing_plan` | Pair every weekly timetable with its selection rule, separated by newlines or ` | `. Blank Edit retains the saved pairs and Custom progress. Ignored for Pause/Resume/manual. |
-| `video_selection` | Manual only: free text such as `lifo`, `random`, a plain-English title rule, or `custom: "Exact filename.mp4"`. Blank uses the saved one-off default. |
+| `video_selection` | Manual only: one combined video/outro entry, such as `lifo; outro: "End.mp4"` or `custom: "Video.mp4"; outro: none`. Blank uses saved defaults. |
 | `manual_schedule_action` | Manual only: `keep_schedule` (default) leaves the plan untouched; `pause_schedule` pauses it before the one-off upload. |
 
 ### Write paired timetables and rules
@@ -54,7 +54,7 @@ Custom filename in order. **Tools → status** shows the same saved plan.
 
 **Edit** with nonblank plan text replaces the complete set of timetable/rule pairs. Include all pairs you
 want to retain; omit a pair to remove it. No video files or published posts are deleted. Blank Edit leaves
-all pairs and progress unchanged. Scheduled runs ignore the separate manual outro fields. Edits validate
+all pairs and progress unchanged. The manual entry is ignored for scheduled runs. Edits validate
 and save atomically, and invalidate older queued scheduled work.
 
 An unchanged ordered Custom list keeps its remaining progress even if moved to different days, reordered
@@ -95,23 +95,28 @@ A new timetable defaults to the clip named `outro`. Use `outro: none` to disable
 outros never restarts an unchanged Custom list. The summary includes each entry's choices and a copyable
 plan. A saved clip missing at publishing time is reported and that platform publishes without it.
 
-### Outro fields (`outro_youtube`, `outro_tiktok`, `outro_instagram`, `outro_facebook`)
+### One-off video and outro entry
 
-- Enter the exact filename of a clip in the Drive folder (as Drive shows it) to choose that platform's outro.
-- **For scheduled entries**, specify the outro inside each entry (examples below). The separate outro form fields are manual-only.
-- **With `manual_now`** the choice applies to **that one video only**; later posts go back to the saved outro.
-- **Empty = no change.** Type `none` to switch that platform's outro off.
-- **Default outro:** a platform with no saved choice uses the clip named exactly `outro` in the folder
-  (`outros.defaultFileName` in `config/pipeline.json`). This applies to scheduled and manual runs alike;
-  a clip entered in the form overrides it, and `none` turns it off for that platform.
-- The outro is appended to the end of the main post (YouTube video and Short, TikTok video, Instagram Reel,
-  Facebook video). Stories are posted without outros. The joined file keeps the main video's frame size;
-  an outro of a different shape is fitted inside it with black bars, and a silent clip gets silence.
-- Outro clips are never chosen by FIFO/LIFO/Random: neither the configured outro files nor **any file whose name
-  contains "outro"** (name your outro clips e.g. `outro_youtube.mp4` so they are excluded even before you
-  configure them). They can still be selected deliberately with `custom`.
-- If an outro file is deleted or moved out of the folder, that platform is published without it and the
-  summary says so. Editing saved outros invalidates older scheduled claims; manual outro overrides affect only that upload.
+For `manual_now`, use the single `video_selection` field for both choices:
+
+```text
+custom: "Video.mp4"; outro: "End.mp4"
+lifo; outro: "End.mp4"
+random; outro: none
+default; outro: "End.mp4"
+```
+
+These are alternative one-off entries, not a multi-line plan. `default` uses the saved one-off video
+rule. Omit `; outro: ...` to use the existing saved/default outro choices; `outro: none` disables it.
+An explicitly chosen outro applies to all four main-video platforms for this upload only. The separate
+platform outro fields have been removed from the form. Missing or ambiguous requested video/outro
+filenames fail before changing the schedule or publishing anything. Tools → `manual_preview` interprets
+and validates the entry in `target` without publishing or changing settings.
+
+Outros are appended to the main video posts, including both YouTube versions; Stories have no outro.
+Configured clips and filenames containing "outro" are excluded from automatic standalone selection.
+A deliberate manual Custom upload can still select one. A previously saved outro that goes missing is
+reported at publishing time and the affected platform publishes without it.
 
 ### Manual uploads and the plan
 
@@ -143,6 +148,7 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 | Action | What it does | Publishes? |
 |---|---|---|
 | `status` | Saved plan, paused/running state, full remaining Custom lists, defaults, next times, recent runs and open publications | no |
+| `manual_preview` | Validate one-off video/outro text in `target` without changing settings or publishing | no |
 | `plan_preview` | Interpret paired timetables/rules in `target` without saving or publishing | no |
 | `verify` | Checks every account identity, permission, folder, Buffer schema, temporary-hosting privacy, free caption model, Worker target | no |
 | `preview` | Read-only selection + media/format plan + captions + Story renders (artifact). `target` = optional filename | no |
