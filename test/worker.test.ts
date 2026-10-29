@@ -371,7 +371,7 @@ describe("HTTP API", () => {
       new Request("https://w/api/config/automated", { method: "POST", headers: { authorization: "Bearer state-secret-123456" }, body: JSON.stringify({ scheduleText: "fri 9" }) }),
       e,
     ).catch((x) => x);
-    expect(bad.status ?? 400).toBe(400);
+    expect(bad.status).toBe(410);
   });
 });
 
@@ -444,9 +444,8 @@ describe("outros", () => {
 describe("folder queue migration", () => {
   it("preserves saved settings, enables random, drops selection history and keeps upload recovery evidence", async () => {
     const db = makeDb(["0001_init.sql", "0002_outros.sql"]);
-    await configureAutomated(db, { scheduleText: "mon 06:00; fri 21:00", selectionPolicy: "lifo", pendingCustom: { fileId: "custom_video_id_123", fileName: "lesson.mp4" } }, NOW);
-    await setPublishing(db, true, "owner", NOW);
-    await setOutros(db, { youtube: { fileId: "outro_video_id_123", fileName: "outro.mp4" } }, "owner", NOW);
+    db.raw.prepare("UPDATE settings SET automation_enabled=1,automation_enabled_at=?,schedule_json=?,selection_policy='lifo',pending_custom_file_id='custom_video_id_123',pending_custom_file_name='lesson.mp4',pending_custom_config_version=2,publishing_enabled=1,config_version=2,outros_json=? WHERE id=1")
+      .run(new Date(NOW).toISOString(), JSON.stringify([{ day: 1, minute: 360 }, { day: 5, minute: 1260 }]), JSON.stringify({ youtube: { fileId: "outro_video_id_123", fileName: "outro.mp4" } }));
     const before = await getSettings(db);
     for (const file of ["confirmed", "missing-outcome"]) db.raw.prepare("INSERT INTO videos(file_id, first_observed_at, consumed) VALUES (?, ?, 1)").run(file, new Date(NOW).toISOString());
     await upsertPublication(db, { runId: "old", fileId: "confirmed", platform: "facebook", surface: "feed", status: "confirmed" }, NOW);
@@ -455,6 +454,7 @@ describe("folder queue migration", () => {
     expect(await publicationsFor(db, { fileId: "confirmed" })).toMatchObject([{ status: "confirmed" }]);
     expect(await publicationsFor(db, { fileId: "missing-outcome" })).toMatchObject([{ status: "uncertain", platform: "pipeline" }]);
     expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name = 'videos'").get()).toBeUndefined();
+    db.raw.exec(readFileSync(new URL("../worker/migrations/0004_scheduled_jobs.sql", import.meta.url), "utf8"));
     await configureAutomated(db, { selectionPolicy: "random" }, NOW + 1);
     expect((await getSettings(db)).selectionPolicy).toBe("random");
     await configureManual(db, { selectionPolicy: "random" }, NOW + 2);

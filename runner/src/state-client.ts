@@ -1,3 +1,4 @@
+import type { JobChange, ScheduledJob } from "../../worker/src/jobs";
 // Client for the Worker's authenticated state API (D1 is the single source of truth).
 import type { SelectionPolicy } from "../../src/shared/selection";
 import { json } from "./http";
@@ -15,6 +16,9 @@ export class StateClient {
     });
   }
 
+  jobs() { return this.call<{ jobs: (ScheduledJob & { nextOccurrences: { key: string; local: string }[] })[] }>("GET", "/api/jobs"); }
+  changeJob(request: JobChange) { return this.call("POST", "/api/jobs/change", request); }
+  jobBatch(batchId: string, token: string) { return this.call<{ claims: string[] }>("POST", "/api/jobs/batch", { batchId, token }); }
   state() {
     return this.call("GET", "/api/state");
   }
@@ -34,8 +38,8 @@ export class StateClient {
   setPublishing(enabled: boolean, actor: string) {
     return this.call("POST", "/api/config/publishing", { enabled, actor });
   }
-  beginRun(b: { origin: string; occurrenceKey?: string; claimToken?: string; githubRunId?: string; githubRunUrl?: string }) {
-    return this.call<{ allowed: boolean; reason: string | null; runId: string | null; settings: any; kind: string }>("POST", "/api/run/begin", b);
+  beginRun(b: { origin: string; occurrenceKey?: string; claimToken?: string; batchId?: string; githubRunId?: string; githubRunUrl?: string }) {
+    return this.call<{ allowed: boolean; reason: string | null; runId: string | null; settings: any; kind: string; job?: ScheduledJob | null }>("POST", "/api/run/begin", b);
   }
   mayPublish(runId: string) {
     return this.call<{ allowed: boolean; status: string; reason: string | null }>("POST", "/api/run/may-publish", { runId });

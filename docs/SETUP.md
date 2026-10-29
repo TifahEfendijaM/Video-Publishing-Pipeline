@@ -141,11 +141,17 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |
 
 
-## Updating manual schedule controls
+## Updating named-job scheduling
 
-Deploy the updated Worker from the tested feature branch before merging the new form into `main`.
-The Worker accepts old manual callers with their original stop-automation behavior, while the new form
-explicitly sends Keep/Stop to a separate `/api/config/manual-choice` endpoint. If the new form reaches an
-older Worker, it fails without changing the schedule; it cannot silently fall back to stopping automation.
-No database migration is needed. After merging, run Tools → verify/status; these checks do not publish
-or change the saved automation state. The manual form defaults to `keep_schedule`.
+During the update, disable live publishing, merge the tested form/runner changes and deploy the updated
+Worker. Deployment applies migration `0004_scheduled_jobs.sql`: an enabled old singleton becomes
+`Default schedule`, retaining its times, automatic policy, outro settings and next Custom override.
+An inactive old schedule creates no active job. The singleton is disabled to prevent double dispatch;
+older queued singleton claims fail closed. The old automated-configuration API returns a clear retirement
+error rather than silently overwriting named jobs.
+
+The new form needs the updated Worker and jobs migration before named-job commands can run. An older
+Worker cannot silently interpret the new manual Keep choice as Stop: the separate endpoint fails closed.
+Run Tools → verify/status and optionally rule_preview, then restore the previous publishing kill switch.
+No user video needs to be published as an activation test. Job settings and pending Custom lists are kept
+in D1; archived videos still leave no permanent selection-history cursor.

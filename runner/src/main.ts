@@ -1,3 +1,6 @@
+import { matchesTitle, resolveCustomList, type JobPolicy } from "../../src/shared/job-selection";
+import type { ScheduledJob } from "../../worker/src/jobs";
+import { interpretVideoRule } from "./video-rule";
 // GitHub Actions runner entry point.
 //   configure  — "Publish video" form (run_mode manual_now | automated)
 //   scheduled  — dispatched by the Cloudflare Worker (or dispatch test)
@@ -152,12 +155,11 @@ function hosting(): { put(p: string): Promise<{ key: string; url: string }>; rem
 function settingsRows(s: any, next: any[]): [string, string][] {
   return [
     ["Automation", s.automationEnabled ? "ENABLED" : "disabled"],
-    ["Saved weekly schedule (Europe/Sarajevo)", `${s.scheduleText}${s.scheduleIsDefault ? " (initial default)" : ""}`],
-    ["Saved selection policy", s.selectionPolicy.toUpperCase()],
-    ["Pending one-time custom video", s.pendingCustom ? `${s.pendingCustom.fileName ?? ""} (${s.pendingCustom.fileId})` : "none"],
+    ["Scheduled jobs", "See the Scheduled jobs report; each job has its own timetable and rule"],
+    ["Default one-off selection policy", s.selectionPolicy.toUpperCase()],
     ["Outros", ["youtube", "tiktok", "instagram", "facebook"].map((p) => `${p}: ${s.outros?.[p] === null ? "none (switched off)" : s.outros?.[p]?.fileName ?? (cfg.outros?.defaultFileName ? `default (${cfg.outros.defaultFileName})` : "none")}`).join("\n")],
     ["Live publishing kill switch", s.publishingEnabled ? "ON (live publishing allowed)" : "OFF (nothing will be published)"],
-    ["Next scheduled occurrences", s.automationEnabled ? next.map((o) => o.local).join("\n") || "none" : "none (automation disabled)"],
+    ["Next scheduled occurrences", s.automationEnabled ? next.map((o) => `${o.jobName ? o.jobName + ": " : ""}${o.local}`).join("\n") || "none" : "none (automation disabled)"],
   ];
 }
 
@@ -173,6 +175,7 @@ interface PublishOpts {
   forcedFileId?: string;
   filter?: Set<string>;
   preview?: boolean;
+  job?: ScheduledJob;
   /** manual_now outro choices for this run only (platform -> clip, or null = no outro); not saved */
   outroOverrides?: Record<string, { fileId: string; fileName: string } | null>;
   summary: Summary;
@@ -184,23 +187,41 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   const d = await drive();
   if (!o.preview) await recoverArchived(d, o.state, s);
   const folder = { videos: await d.listVideos() };
+  const { jobs } = await o.state.jobs();
+  if (o.job) {
+    const fresh = jobs.find((j) => j.id === o.job!.id);
+    const gate = await o.state.mayPublish(o.runId);
+    if (!fresh || fresh.status !== "active" || !gate.allowed) {
+      s.p(`Scheduled job is complete, stopped, deleted or stale: ${gate.reason ?? "no active job"}. Nothing published.`);
+      await o.state.finishRun({ runId: o.runId, status: "cancelled_stale" });
+      return "cancelled_stale";
+    }
+    o.job = fresh;
+    o.pendingCustom = fresh.remaining[0] ?? null;
+    o.policy = fresh.titleRule?.order ?? (fresh.policy === "custom" ? "fifo" : fresh.policy as SelectionPolicy);
+  }
+  const reservedIds = new Set(jobs.flatMap((j) => j.remaining.map((v) => v.fileId)));
+  if (o.job?.remaining[0]) reservedIds.delete(o.job.remaining[0].fileId);
   const savedOutros: Record<string, { fileId: string; fileName: string } | null> = (await o.state.state()).settings.outros ?? {};
   const outros = Object.fromEntries(
     (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(o.outroOverrides && p in o.outroOverrides ? o.outroOverrides[p] : savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
   );
   const excludeIds = new Set(Object.values(outros).flatMap((x) => (x ? [x.fileId] : [])));
   for (const outro of Object.values(savedOutros)) if (outro) excludeIds.add(outro.fileId);
+  for (const job of jobs) for (const outro of Object.values(job.outros)) if (outro) excludeIds.add(outro.fileId);
   const queue = await maintainQueue(folder.videos, excludeIds, queueDeps(d, o.state), !!o.preview);
+  const candidates = o.job?.titleRule ? folder.videos.filter((v) => matchesTitle(v.name, o.job!.titleRule!)) : folder.videos;
   let sel;
   if (o.forcedFileId) {
     const v = folder.videos.find((x) => x.id === o.forcedFileId);
     if (!v || !await d.stillInFolder(v.id)) throw new Error(`Video ${o.forcedFileId} is no longer in the folder; cannot retry.`);
     sel = { ...selectVideo({ policy: o.policy, pendingCustomFileId: v.id, pendingCustomFileName: v.name, videos: [v] }), method: "retry" as const };
   } else {
-    sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: folder.videos, excludeIds, blockedIds: queue.blockedIds });
+    sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: candidates, excludeIds, reservedIds, strictCustom: !!o.job, blockedIds: queue.blockedIds });
   }
   s.h(2, "Video selection");
   s.kv([
+    ["Job", o.job?.name ?? "one-off"],
     ["Method", sel.method === "custom" ? "custom (one-run override)" : sel.method.toUpperCase()],
     ["Fallback", sel.fallback ?? "none"],
     ["Eligible videos remaining in the folder", sel.eligibleCount],
@@ -386,7 +407,7 @@ async function cmdConfigure() {
   const s = new Summary();
   const state = stateClient();
   const mode = env("RUN_MODE");
-  const selection = env("VIDEO_SELECTION");
+  const selection = env("VIDEO_SELECTION") || "keep_existing";
   const customName = process.env.CUSTOM_VIDEO_NAME ?? "";
   const scheduleText = process.env.SCHEDULE_TEXT ?? "";
   const actor = env("GITHUB_ACTOR") || "github";
@@ -421,11 +442,12 @@ async function cmdConfigure() {
     if (save && Object.keys(changes).length) await state.setOutros(changes, actor);
     return { notes, changes };
   };
-  if (!["fifo", "lifo", "random", "custom"].includes(selection)) throw new Error("video_selection must be fifo, lifo, random or custom");
-  const policyChoice = selection === "custom" ? null : (selection as SelectionPolicy);
+  if (!["keep_existing", "fifo", "lifo", "random", "custom", "rule"].includes(selection)) throw new Error("Choose keep_existing, fifo, lifo, random, custom or rule");
+  const policyChoice = ["fifo", "lifo", "random"].includes(selection) ? selection as SelectionPolicy : null;
 
   s.h(1, `EasyBosnian video — ${mode}`);
   if (mode === "manual_now") {
+    if (selection === "rule") throw new Error("Plain-English selection rules currently apply to scheduled jobs; choose FIFO/LIFO/Random/Custom for a one-off upload");
     const scheduleAction = env("MANUAL_SCHEDULE_ACTION") || "keep_schedule";
     if (!["keep_schedule", "stop_schedule"].includes(scheduleAction)) throw new Error("manual_schedule_action must be keep_schedule or stop_schedule");
     const scheduleBehavior = scheduleAction === "keep_schedule" ? "keep" : "stop";
@@ -467,59 +489,82 @@ async function cmdConfigure() {
     return;
   }
 
-  // automated: validate locally (the Worker re-validates); resolve custom to a Drive file ID; save; do NOT publish.
-  let normalized: string | null = null;
-  try {
-    const slots = parseSchedule(scheduleText);
-    normalized = slots ? formatSchedule(slots) : null;
-  } catch (e) {
-    if (e instanceof ScheduleParseError) {
-      s.p(`❌ Invalid schedule: ${e.message} The previous configuration was left unchanged.`);
-      s.write();
-      throw e;
-    }
-    throw e;
+  // Named-job management never publishes. Resolve and validate before saving anything.
+  const action = env("JOB_ACTION") || "list";
+  const name = env("JOB_NAME").normalize("NFC");
+  if (!["create", "edit", "delete", "list"].includes(action)) throw new Error("Choose Create, Edit, Delete or List jobs");
+  if (action === "list") { await reportJobs(s, state); s.write(); return; }
+  if (action === "delete") {
+    const result = await state.changeJob({ action, name });
+    s.p(`Deleted job "${result.deleted}". Other jobs and video files were not changed.`);
+    await reportJobs(s, state); s.write(); return;
   }
-  let pending: { fileId: string; fileName: string } | null = null;
-  const notes: string[] = [];
-  notes.push("manual_schedule_action ignored: it only applies to manual_now. Automated configuration replaces the saved schedule and settings.");
-  if (selection === "custom") {
-    if (!customName.trim()) notes.push("Custom selected but the filename was empty: the saved FIFO/LIFO/random policy will be used.");
-    else {
-      const d = await drive(); // auth/network failures abort here and leave the configuration untouched
-      const videos = await d.listVideos();
-      const { resolveCustomName } = await import("../../src/shared/selection");
-      const r = resolveCustomName(customName, videos);
-      if (r.kind === "match") pending = { fileId: r.video.id, fileName: r.video.name };
-      else if (r.kind === "not_found") notes.push(`No video named "${r.name}" in the folder: the saved FIFO/LIFO/random policy will be used.`);
-      else if (r.kind === "ambiguous") notes.push(`${r.count} videos are named "${r.name}": ambiguous, so the saved FIFO/LIFO/random policy will be used.`);
-    }
-  } else if (customName.trim()) notes.push("custom_video_name ignored because video_selection is not custom.");
-  notes.push(...(await applyOutros(true)).notes);
-  const view = await state.configureAutomated({ scheduleText: normalized, selectionPolicy: policyChoice, pendingCustom: pending, actor });
-  s.kv([
-    ["Origin", "manual configuration (automated)"],
-    ["Submitted schedule", scheduleText.trim() ? `${scheduleText.trim()} → ${normalized}` : "(empty — kept the saved schedule)"],
-    ["Published now?", "No — the next video is published at the first future occurrence below."],
-  ]);
-  if (notes.length) s.list(notes);
-  if (pending) s.p(`One-time custom video for the next occurrence: ${pending.fileName} (${pending.fileId}). Afterwards the saved ${view.settings.selectionPolicy.toUpperCase()} policy resumes.`);
-  s.h(2, "Effective saved configuration");
-  s.kv(settingsRows(view.settings, view.nextOccurrences));
-  const perMonth = Math.round(view.settings.scheduleEffective.length * 4.35 * 10) / 10;
-  if (cfg.destinations.youtube.regular.enabled && perMonth > cfg.destinations.youtube.regular.uploadPostMonthlyLimit) {
-    s.p(`⚠️ This schedule means about ${perMonth} videos per month, but Upload-Post's free plan allows ${cfg.destinations.youtube.regular.uploadPostMonthlyLimit} uploads per month (used for the regular YouTube video). Once the limit is reached, those uploads are refused (never billed) and reported as failed until the next month.`);
+  const existing = action === "edit" ? (await state.jobs()).jobs.find((j) => j.name.toLowerCase() === name.toLowerCase() || j.id === name) : undefined;
+  if (action === "edit" && !existing) throw new Error("No job with that name; run List jobs to copy its name");
+  let policy: JobPolicy | null = selection === "keep_existing" ? null : selection === "rule" ? "title_rule" : selection as JobPolicy;
+  let titleRule = existing?.titleRule;
+  if (selection === "rule") {
+    const sentence = env("VIDEO_RULE");
+    if (sentence) {
+      const rule = await interpretVideoRule(sentence, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
+      policy = rule.policy; titleRule = rule.titleRule;
+      s.p(`Interpreted selection rule: ${rule.explanation}`);
+    } else if (!existing?.titleRule) throw new Error("Enter a plain-English video rule");
   }
-  if (!view.settings.publishingEnabled) s.p("⚠️ The live publishing kill switch is OFF: scheduled runs will run and report, but will not publish until it is switched on (Tools → publishing_enable).");
+  const effective = policy ?? existing?.policy;
+  const remaining = effective === "custom" && customName.trim() ? resolveCustomList(customName, await (await drive()).listVideos()) : undefined;
+  const outros = (await applyOutros(false)).changes;
+  const result = await state.changeJob({ action: action as "create" | "edit", name, scheduleText, policy, remaining, titleRule, outros });
+  s.p(`${action === "create" ? "Created" : "Updated"} job "${result.job.name}". Nothing was published now; other jobs were left unchanged.`);
+  await reportJobs(s, state);
   s.write();
 }
 
+async function reportJobs(s: Summary, state: StateClient) {
+  const { jobs } = await state.jobs();
+  s.h(2, "Scheduled jobs");
+  if (!jobs.length) { s.p("No scheduled jobs configured."); return; }
+  s.table(["Job name", "Schedule (Europe/Sarajevo)", "Selection", "Status", "Next occurrence", "Custom remaining"], jobs.map((j) => [j.name, j.scheduleText, j.policy, j.status, j.nextOccurrences[0]?.local ?? "none", String(j.remaining.length)]));
+  let folder: FolderVideo[] | undefined;
+  for (const job of jobs) {
+    s.h(3, job.name);
+    if (job.remaining.length) {
+      s.p(`Remaining Custom videos, in publication order (${job.remaining.length}):`);
+      s.list(job.remaining.map((v, i) => `${i + 1}. ${v.fileName}`));
+    }
+    if (job.titleRule) {
+      const rule = job.titleRule;
+      s.p(`Title ${rule.match.replace(/_/g, " ")} ${JSON.stringify(rule.text)}; ${rule.order.toUpperCase()}. Waiting for future matches when none remain.`);
+      folder ??= await (await drive()).listVideos();
+      const reserved = new Set(jobs.flatMap((j) => j.remaining.map((v) => v.fileId)));
+      const outroIds = new Set(jobs.flatMap((j) => Object.values(j.outros).flatMap((o) => o ? [o.fileId] : [])));
+      const matches = folder.filter((v) => matchesTitle(v.name, rule) && !/outro/i.test(v.name) && !outroIds.has(v.id) && !reserved.has(v.id));
+      if (matches.length) { s.p("Titles matching now (pending publishing outcomes may still hold a match):"); s.list(matches.map((v) => v.name)); } else s.p("No eligible titles match now.");
+    }
+  }
+}
+
 async function cmdScheduled() {
-  const s = new Summary();
   const state = stateClient();
-  const begin = await state.beginRun({ origin: "scheduled", occurrenceKey: env("OCCURRENCE_KEY"), claimToken: process.env.CLAIM_TOKEN, githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
+  if (env("DISPATCH_MODE") === "jobs") {
+    const batchId = env("OCCURRENCE_KEY"), token = env("CLAIM_TOKEN");
+    const { claims } = await state.jobBatch(batchId, token);
+    let failures = 0;
+    for (const key of claims) {
+      try { await scheduledOccurrence(state, key, token, batchId); }
+      catch (e) { failures++; console.error(`Job occurrence failed: ${summarizeError(e, 250)}`); }
+    }
+    if (failures) throw new Error(`${failures} job occurrence(s) failed; other claimed jobs were processed independently. See their summaries.`);
+    return;
+  }
+  await scheduledOccurrence(state, env("OCCURRENCE_KEY"), env("CLAIM_TOKEN"));
+}
+
+async function scheduledOccurrence(state: StateClient, occurrenceKey: string, claimToken: string, batchId?: string) {
+  const s = new Summary();
+  const begin = await state.beginRun({ origin: "scheduled", occurrenceKey, claimToken, batchId, githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
   const st = await state.state();
-  const key = env("OCCURRENCE_KEY");
+  const key = occurrenceKey.includes("|") ? occurrenceKey.split("|")[1] : occurrenceKey;
   const scheduledLocal = /^\d{4}-/.test(key) ? (await import("../../src/shared/schedule")).localLabel(Date.parse(key)) : "n/a (dispatch test)";
   s.h(1, begin.kind === "dispatch_test" ? "EasyBosnian video — dispatch test" : "EasyBosnian video — scheduled run");
   s.kv([
@@ -529,6 +574,7 @@ async function cmdScheduled() {
     ["Run ID", begin.runId ?? "—"],
   ]);
   s.h(2, "Saved configuration");
+  if (begin.job) s.kv([["Job", begin.job.name], ["Schedule", begin.job.scheduleText], ["Selection", begin.job.policy]]);
   s.kv(settingsRows(st.settings, st.nextOccurrences));
   if (!begin.allowed) {
     s.p(`${begin.kind === "dispatch_test" ? "✅ Dispatch verified: the Worker reached this workflow on the intended branch with a valid claim." : "⏹️ Not publishing."} ${begin.reason ?? ""}`);
@@ -536,9 +582,10 @@ async function cmdScheduled() {
     s.write();
     return;
   }
-  const custom = (await state.consumeCustom(begin.runId!)).custom;
+  const custom = begin.job ? begin.job.remaining[0] ?? null : (await state.consumeCustom(begin.runId!)).custom;
+  if (begin.job) s.p(`Scheduled job: ${begin.job.name}`);
   try {
-    const status = await publishFlow({ runId: begin.runId!, origin: "scheduled", scheduledLocal, policy: begin.settings.selectionPolicy, pendingCustom: custom, summary: s, state });
+    const status = await publishFlow({ runId: begin.runId!, origin: "scheduled", scheduledLocal, policy: begin.job ? begin.job.titleRule?.order ?? (begin.job.policy === "custom" ? "fifo" : begin.job.policy as SelectionPolicy) : begin.settings.selectionPolicy, pendingCustom: custom, job: begin.job ?? undefined, outroOverrides: begin.job?.outros, summary: s, state });
     s.p(`Run result: **${status}**.`);
   } catch (e) {
     s.p(`Run failed before completion: ${summarizeError(e)}`);
@@ -562,6 +609,7 @@ async function cmdTools() {
     const st = await state.state();
     s.kv(settingsRows(st.settings, st.nextOccurrences));
     s.p(`Configuration version ${st.settings.configVersion}, last changed ${st.settings.updatedAt} by ${st.settings.updatedBy ?? "?"}.`);
+    await reportJobs(s, state);
     s.h(2, "Recent runs");
     s.table(["Started", "Origin", "Status", "Video", "Method", "Note"], st.recentRuns.map((r: any) => [r.started_at, r.origin, r.status, r.selected_file_name ? `${r.selected_file_name} (${r.selected_file_id})` : "", r.selection_method, r.selection_note]));
     s.h(2, "Recent scheduler dispatches");
@@ -583,6 +631,9 @@ async function cmdTools() {
       s.write();
       throw new Error(`dispatch test failed with HTTP ${r.githubStatus}`);
     }
+  } else if (action === "rule_preview") {
+    const interpreted = await interpretVideoRule(target, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
+    s.p(`Interpreted rule: ${interpreted.explanation} Nothing was saved or published.`);
   } else if (action === "verify") {
     await verify(s, state);
   } else if (action === "preview") {
@@ -621,7 +672,7 @@ async function cmdTools() {
 function readOnly(state: StateClient): StateClient {
   return new Proxy(state, {
     get(target, prop, recv) {
-      if (["completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "configureAutomated", "setPublishing"].includes(String(prop))) {
+      if (["completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "changeJob", "configureAutomated", "setPublishing"].includes(String(prop))) {
         return async () => {
           throw new Error(`preview is read-only (${String(prop)})`);
         };

@@ -1,3 +1,4 @@
+import { advanceCustomJobs, dispatchJobs, jobById, listJobs, validBatch } from "./jobs";
 import type { SelectionPolicy } from "../../src/shared/selection";
 // Scheduler + state logic. Runs inside the Cloudflare Worker against D1; tests run it against node:sqlite.
 import {
@@ -18,6 +19,7 @@ export interface Stmt {
   run(): Promise<{ meta: { changes: number } }>;
 }
 export interface Db {
+  batch(statements: Stmt[]): Promise<{ meta: { changes: number } }[]>;
   prepare(sql: string): Stmt;
 }
 
@@ -115,15 +117,18 @@ export async function getSettings(db: Db): Promise<Settings> {
 
 export async function stateView(db: Db, nowMs: number) {
   const settings = await getSettings(db);
-  const upcoming = nextOccurrences(settings.scheduleEffective, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel }));
+  const jobs = await listJobs(db, nowMs);
+  const legacy = nextOccurrences(settings.scheduleEffective, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel }));
+  const upcoming = [...(settings.automationEnabled ? legacy : []), ...jobs.flatMap((j) => j.nextOccurrences.map((o) => ({ ...o, jobName: j.name })))].sort((a,b) => a.key.localeCompare(b.key)).slice(0,10);
   const runs = (await db.prepare("SELECT * FROM runs ORDER BY started_at DESC LIMIT 10").all()).results;
   const claims = (await db.prepare("SELECT occurrence_key, kind, config_version, claimed_at, dispatch_http_status, dispatch_note, state FROM occurrence_claims ORDER BY claimed_at DESC LIMIT 10").all()).results;
   const open = (await db.prepare("SELECT * FROM publications WHERE status IN ('initiated','processing','uncertain') ORDER BY updated_at DESC LIMIT 50").all()).results;
   return {
     now: iso(nowMs),
-    settings,
-    nextOccurrences: settings.automationEnabled ? upcoming : [],
-    nextOccurrencesIfEnabled: upcoming,
+    settings: { ...settings, automationEnabled: settings.automationEnabled || jobs.some((j) => j.status === "active") },
+    jobs,
+    nextOccurrences: upcoming,
+    nextOccurrencesIfEnabled: legacy,
     recentRuns: runs,
     recentClaims: claims,
     openPublications: open,
@@ -144,7 +149,9 @@ export async function configureManual(db: Db, req: { selectionPolicy?: Selection
     await log(db, "manual_now.keep_schedule", { selectionPolicy: policy, actor: req.actor ?? null }, nowMs);
     return { ...(await stateView(db, nowMs)), manualScheduleBehavior: behavior };
   }
-  // Disable automation FIRST and keep the saved schedule; clear any pending custom override.
+  // Explicit manual stop halts every active named job; Keep never changes any job.
+  await db.prepare("UPDATE scheduled_jobs SET status='stopped',version=version+1 WHERE status='active'").run();
+  // Disable legacy automation and keep its saved schedule; clear the pending custom override.
   await db
     .prepare(
       `UPDATE settings SET automation_enabled = 0, selection_policy = COALESCE(?, selection_policy),
@@ -243,7 +250,9 @@ export async function dispatchWorkflow(env: Env, inputs: Record<string, string>,
 
 export async function handleScheduled(env: Env, scheduledTime: number, fetchFn: FetchFn): Promise<{ action: string; key?: string; status?: number }> {
   const db = env.DB;
+  const named = await dispatchJobs(env, scheduledTime, fetchFn);
   const s = await getSettings(db);
+  if (named) return named;
   if (!s.automationEnabled) return { action: "automation_disabled" };
   const occ = dueOccurrence(s.scheduleEffective, scheduledTime);
   if (!occ) return { action: "not_due" };
@@ -290,15 +299,16 @@ export async function dispatchTest(env: Env, fetchFn: FetchFn, nowMs: number) {
 
 export async function beginRun(
   db: Db,
-  req: { origin: string; occurrenceKey?: string; claimToken?: string; githubRunId?: string; githubRunUrl?: string },
+  req: { origin: string; occurrenceKey?: string; claimToken?: string; batchId?: string; githubRunId?: string; githubRunUrl?: string },
   nowMs: number,
 ) {
   const s = await getSettings(db);
   const runId = `${req.origin}-${nowMs}-${randomToken().slice(0, 8)}`;
+  let jobId: string | null = null;
   const insertRun = (status: string, version: number, note: string | null) =>
     db
-      .prepare("INSERT INTO runs (run_id, origin, occurrence_key, config_version, github_run_id, github_run_url, started_at, status, selection_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(runId, req.origin, req.occurrenceKey ?? null, version, req.githubRunId ?? null, req.githubRunUrl ?? null, iso(nowMs), status, note)
+      .prepare("INSERT INTO runs (run_id, origin, occurrence_key, config_version, github_run_id, github_run_url, started_at, status, selection_note, job_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(runId, req.origin, req.occurrenceKey ?? null, version, req.githubRunId ?? null, req.githubRunUrl ?? null, iso(nowMs), status, note, jobId)
       .run();
 
   if (req.origin === "manual" || req.origin === "retry") {
@@ -309,10 +319,12 @@ export async function beginRun(
   if (!req.occurrenceKey || !req.claimToken) throw new HttpError(400, "occurrence key and claim token required");
 
   const claim = await db.prepare("SELECT * FROM occurrence_claims WHERE occurrence_key = ?").bind(req.occurrenceKey).first<Record<string, any>>();
-  if (!claim || !timingSafeEqual(claim.claim_token_hash, await sha256Hex(req.claimToken))) {
+  const authorized = claim?.job_id && req.batchId ? await validBatch(db, req.batchId, req.claimToken) : claim && timingSafeEqual(claim.claim_token_hash, await sha256Hex(req.claimToken));
+  if (!claim || !authorized) {
     await log(db, "run.rejected", { key: req.occurrenceKey, reason: "unknown occurrence or bad claim token" }, nowMs);
     return { allowed: false, reason: "Unknown occurrence or invalid claim token: this run was not dispatched by the scheduler.", runId: null, settings: s, kind: "invalid" };
   }
+  jobId = claim.job_id ?? null;
   const start = await db
     .prepare("UPDATE occurrence_claims SET state = 'started' WHERE occurrence_key = ? AND state IN ('claimed','dispatched','dispatch_failed')")
     .bind(req.occurrenceKey)
@@ -323,6 +335,12 @@ export async function beginRun(
   if (claim.kind === "dispatch_test") {
     await insertRun("dispatch_test", s.configVersion, "non-publishing dispatch verification");
     return { allowed: false, reason: "Dispatch verification run: publishing is never performed in this mode.", runId, settings: s, kind: "dispatch_test" };
+  }
+  if (jobId) {
+    const job = await jobById(db, jobId);
+    const reason = !job ? "Job was deleted." : job.status !== "active" ? "Job is no longer active." : job.version !== claim.config_version ? "Job settings changed after dispatch." : null;
+    await insertRun(reason ? "cancelled_stale" : "running", claim.config_version, reason);
+    return { allowed: !reason, reason, runId, settings: s, kind: "scheduled", job };
   }
   let reason: string | null = null;
   if (!s.automationEnabled) reason = "Automation was disabled after this occurrence was dispatched (manual_now or configuration change); nothing will be published.";
@@ -337,7 +355,10 @@ export async function mayPublish(db: Db, runId: string) {
   if (!run) throw new HttpError(404, "unknown run");
   const s = await getSettings(db);
   if (!s.publishingEnabled) return { allowed: false, status: "disabled", reason: "Global publishing kill switch is OFF." };
-  if (run.origin === "scheduled") {
+  if (run.origin === "scheduled" && run.job_id) {
+    const job = await jobById(db, run.job_id);
+    if (!job || job.status !== "active" || job.version !== run.config_version) return { allowed: false, status: "disabled", reason: "This job was deleted, stopped, completed or edited." };
+  } else if (run.origin === "scheduled") {
     if (!s.automationEnabled) return { allowed: false, status: "disabled", reason: "Automation was disabled during this run." };
     if (s.configVersion !== run.config_version) return { allowed: false, status: "disabled", reason: "Configuration changed during this run." };
   }
@@ -377,6 +398,7 @@ const STATUSES = new Set(["initiated", "processing", "confirmed", "failed", "unc
 /** Called only after Drive confirms source removal. These rows are recovery state, not a cursor. */
 export async function completeVideo(db: Db, fileId: string) {
   if (!fileId) throw new HttpError(400, "fileId required");
+  await advanceCustomJobs(db, fileId);
   await db.prepare("UPDATE runs SET selected_file_id = NULL, selected_file_name = NULL, selection_note = NULL WHERE selected_file_id = ?").bind(fileId).run();
   await db.prepare("DELETE FROM publications WHERE file_id = ?").bind(fileId).run();
   return { ok: true };
