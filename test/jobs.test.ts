@@ -20,14 +20,14 @@ async function create(db: ReturnType<typeof makeDb>, name: string, policy: "fifo
 }
 
 describe("independent named jobs", () => {
-  it("exposes full ordered remaining lists through the authenticated API, with no pause/resume actions", async () => {
+  it("exposes full ordered remaining lists through the authenticated API, while retiring named job mutation routes", async () => {
     const e = env();
     await create(e.DB as any, "Series", "custom");
     expect((await route(new Request("https://w/api/jobs"), e)).status).toBe(401);
     const response = await route(new Request("https://w/api/jobs", { headers: { authorization: "Bearer state" } }), e);
     const report = await response.json();
     expect(report.jobs[0].remaining).toEqual([first, second]);
-    await expect(route(new Request("https://w/api/jobs/change", { method: "POST", headers: { authorization: "Bearer state" }, body: JSON.stringify({ action: "pause", name: "Series" }) }), e)).rejects.toThrow(/Choose create/);
+    await expect(route(new Request("https://w/api/jobs/change", { method: "POST", headers: { authorization: "Bearer state" }, body: JSON.stringify({ action: "pause", name: "Series" }) }), e)).rejects.toThrow(/retired/);
     expect((await listJobs(e.DB, NOW))[0].status).toBe("active");
   });
   it("creates separately and edits only the named job, retaining blank fields", async () => {
@@ -89,14 +89,14 @@ describe("independent named jobs", () => {
     expect(db.raw.prepare("SELECT * FROM job_reservations").all()).toEqual([]);
   });
 
-  it("manual Keep preserves all jobs and Stop halts them without deleting their remaining lists", async () => {
+  it("manual Keep preserves all jobs and Pause retains their remaining lists", async () => {
     const db = makeDb();
     const a = await create(db, "Series", "custom"); await create(db, "Other");
     const before = await listJobs(db, NOW);
     await configureManual(db, { scheduleBehavior: "keep", selectionPolicy: "random" }, NOW);
     expect(await listJobs(db, NOW)).toEqual(before);
     await configureManual(db, { scheduleBehavior: "stop" }, NOW);
-    expect((await listJobs(db, NOW)).every((j) => j.status === "stopped")).toBe(true);
+    expect((await listJobs(db, NOW)).every((j) => j.nextOccurrences.length === 0)).toBe(true);
     expect((await jobById(db, a.id))?.remaining).toEqual([first, second]);
   });
 });
@@ -139,6 +139,7 @@ describe("durable multi-job dispatch", () => {
     const db = makeDb(["0001_init.sql", "0002_outros.sql", "0003_folder_queue.sql"]);
     db.raw.prepare("UPDATE settings SET automation_enabled=1,schedule_json=?,selection_policy='lifo',pending_custom_file_id=?,pending_custom_file_name=? WHERE id=1").run(JSON.stringify([{ day: 5, minute: 300 }]), first.fileId, first.fileName);
     db.raw.exec(readFileSync(new URL("../worker/migrations/0004_scheduled_jobs.sql", import.meta.url), "utf8"));
+    db.raw.exec(readFileSync(new URL("../worker/migrations/0005_publishing_plan.sql", import.meta.url), "utf8"));
     const jobs = await listJobs(db, NOW);
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ name: "Default schedule", policy: "lifo", remaining: [first], status: "active" });

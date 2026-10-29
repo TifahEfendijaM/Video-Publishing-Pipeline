@@ -1,4 +1,5 @@
 import { advanceCustomJobs, dispatchJobs, jobById, listJobs, validBatch } from "./jobs";
+import { planState, setPlanPaused } from './plan-state';
 import type { SelectionPolicy } from "../../src/shared/selection";
 // Scheduler + state logic. Runs inside the Cloudflare Worker against D1; tests run it against node:sqlite.
 import {
@@ -118,14 +119,15 @@ export async function getSettings(db: Db): Promise<Settings> {
 export async function stateView(db: Db, nowMs: number) {
   const settings = await getSettings(db);
   const jobs = await listJobs(db, nowMs);
+  const plan = await planState(db);
   const legacy = nextOccurrences(settings.scheduleEffective, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel }));
-  const upcoming = [...(settings.automationEnabled ? legacy : []), ...jobs.flatMap((j) => j.nextOccurrences.map((o) => ({ ...o, jobName: j.name })))].sort((a,b) => a.key.localeCompare(b.key)).slice(0,10);
+  const upcoming = [...(!plan.paused && settings.automationEnabled ? legacy : []), ...jobs.flatMap((j) => j.nextOccurrences.map((o) => ({ ...o, jobName: j.scheduleText })))].sort((a,b) => a.key.localeCompare(b.key)).slice(0,10);
   const runs = (await db.prepare("SELECT * FROM runs ORDER BY started_at DESC LIMIT 10").all()).results;
   const claims = (await db.prepare("SELECT occurrence_key, kind, config_version, claimed_at, dispatch_http_status, dispatch_note, state FROM occurrence_claims ORDER BY claimed_at DESC LIMIT 10").all()).results;
   const open = (await db.prepare("SELECT * FROM publications WHERE status IN ('initiated','processing','uncertain') ORDER BY updated_at DESC LIMIT 50").all()).results;
   return {
     now: iso(nowMs),
-    settings: { ...settings, automationEnabled: settings.automationEnabled || jobs.some((j) => j.status === "active") },
+    settings: { ...settings, automationEnabled: !plan.paused && (settings.automationEnabled || jobs.some((j) => j.status === "active")), planPaused: !!plan.paused },
     jobs,
     nextOccurrences: upcoming,
     nextOccurrencesIfEnabled: legacy,
@@ -149,8 +151,8 @@ export async function configureManual(db: Db, req: { selectionPolicy?: Selection
     await log(db, "manual_now.keep_schedule", { selectionPolicy: policy, actor: req.actor ?? null }, nowMs);
     return { ...(await stateView(db, nowMs)), manualScheduleBehavior: behavior };
   }
-  // Explicit manual stop halts every active named job; Keep never changes any job.
-  await db.prepare("UPDATE scheduled_jobs SET status='stopped',version=version+1 WHERE status='active'").run();
+  // Explicit manual pause retains every rule and Custom queue; Keep changes nothing.
+  await setPlanPaused(db, true, nowMs);
   // Disable legacy automation and keep its saved schedule; clear the pending custom override.
   await db
     .prepare(
@@ -338,7 +340,7 @@ export async function beginRun(
   }
   if (jobId) {
     const job = await jobById(db, jobId);
-    const reason = !job ? "Job was deleted." : job.status !== "active" ? "Job is no longer active." : job.version !== claim.config_version ? "Job settings changed after dispatch." : null;
+    const reason = (await planState(db)).paused ? 'The publishing plan is paused.' : !job ? "Plan entry was removed." : job.status !== "active" ? "This list is complete." : job.version !== claim.config_version ? "The plan changed after dispatch." : null;
     await insertRun(reason ? "cancelled_stale" : "running", claim.config_version, reason);
     return { allowed: !reason, reason, runId, settings: s, kind: "scheduled", job };
   }
@@ -356,6 +358,7 @@ export async function mayPublish(db: Db, runId: string) {
   const s = await getSettings(db);
   if (!s.publishingEnabled) return { allowed: false, status: "disabled", reason: "Global publishing kill switch is OFF." };
   if (run.origin === "scheduled" && run.job_id) {
+    if ((await planState(db)).paused) return { allowed: false, status: 'disabled', reason: 'The publishing plan is paused.' };
     const job = await jobById(db, run.job_id);
     if (!job || job.status !== "active" || job.version !== run.config_version) return { allowed: false, status: "disabled", reason: "This job was deleted, stopped, completed or edited." };
   } else if (run.origin === "scheduled") {

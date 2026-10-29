@@ -1,4 +1,5 @@
-import { batchClaims, changeJob, listJobs } from "./jobs";
+import { batchClaims, listJobs } from "./jobs";
+import { changePlan, planView } from './plan';
 // Cloudflare Worker: timing + dispatch only (plus the small authenticated state API the runner uses).
 // Video download/processing/upload never happens here.
 import {
@@ -54,6 +55,7 @@ export async function route(req: Request, env: Env): Promise<Response> {
   const db = env.DB;
   const m = req.method;
   const p = url.pathname;
+  if (m === 'GET' && p === '/api/plan') return json(await planView(db, now));
   if (m === "GET" && p === "/api/jobs") return json({ jobs: await listJobs(db, now) });
   if (m === "GET" && p === "/api/state") return json(await stateView(db, now));
   if (m === "GET" && p === "/api/publications/files") return json({ fileIds: (await db.prepare("SELECT DISTINCT file_id FROM publications").all<{ file_id: string }>()).results.map((p) => p.file_id) });
@@ -87,9 +89,11 @@ export async function route(req: Request, env: Env): Promise<Response> {
       if (b.scheduleBehavior !== "keep" && b.scheduleBehavior !== "stop") throw new HttpError(400, "manual schedule choice required");
       return json(await configureManual(db, b, now));
     case "/api/config/automated":
-      throw new HttpError(410, "Use named job Create/Edit; the legacy singleton form is retired");
+      throw new HttpError(410, "Use publishing plan Edit; the legacy singleton form is retired");
     case "/api/jobs/change":
-      return json(await changeJob(db, b, now));
+      throw new HttpError(410, 'Named job management is retired; use publishing plan Edit/Pause/Resume');
+    case '/api/plan/change':
+      return json(await changePlan(db, b, now));
     case "/api/jobs/batch":
       return json(await batchClaims(db, String(b.batchId ?? ""), String(b.token ?? "")));
     case "/api/config/outros":

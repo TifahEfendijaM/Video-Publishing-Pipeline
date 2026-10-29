@@ -1,4 +1,5 @@
-import type { JobChange, ScheduledJob } from "../../worker/src/jobs";
+import type { ScheduledJob } from "../../worker/src/jobs";
+import type { PlanChange, planView } from '../../worker/src/plan';
 // Client for the Worker's authenticated state API (D1 is the single source of truth).
 import type { SelectionPolicy } from "../../src/shared/selection";
 import { json } from "./http";
@@ -17,7 +18,8 @@ export class StateClient {
   }
 
   jobs() { return this.call<{ jobs: (ScheduledJob & { nextOccurrences: { key: string; local: string }[] })[] }>("GET", "/api/jobs"); }
-  changeJob(request: JobChange) { return this.call("POST", "/api/jobs/change", request); }
+  plan() { return this.call<Awaited<ReturnType<typeof planView>>>('GET','/api/plan'); }
+  changePlan(request: PlanChange) { return this.call<Awaited<ReturnType<typeof planView>>>('POST','/api/plan/change',request); }
   jobBatch(batchId: string, token: string) { return this.call<{ claims: string[] }>("POST", "/api/jobs/batch", { batchId, token }); }
   state() {
     return this.call("GET", "/api/state");

@@ -1,28 +1,32 @@
 import { dispatchWorkflow, HttpError, randomToken, sha256Hex, timingSafeEqual, type Db, type Env, type FetchFn, type Outros } from "./logic";
 import { dueOccurrence, nextOccurrences, parseSchedule, formatSchedule, type Slot } from "../../src/shared/schedule";
 import type { CustomVideo, JobPolicy, TitleRule } from "../../src/shared/job-selection";
+import { planState } from './plan-state';
 
 export interface ScheduledJob {
   id: string; name: string; schedule: Slot[]; scheduleText: string; policy: JobPolicy;
   remaining: CustomVideo[]; titleRule: TitleRule | null; outros: Outros;
   status: "active" | "completed" | "stopped"; version: number; enabledAt: string;
+  originalCustom: CustomVideo[];
 }
 const iso = (n: number) => new Date(n).toISOString();
 function read(r: any): ScheduledJob {
   const schedule = JSON.parse(r.schedule_json);
   return { id: r.id, name: r.name, schedule, scheduleText: formatSchedule(schedule), policy: r.policy,
     remaining: JSON.parse(r.remaining_json), titleRule: r.title_rule_json ? JSON.parse(r.title_rule_json) : null,
-    outros: JSON.parse(r.outros_json), status: r.status, version: r.version, enabledAt: r.enabled_at };
+    outros: JSON.parse(r.outros_json), status: r.status, version: r.version, enabledAt: r.enabled_at,
+    originalCustom: JSON.parse(r.custom_original_json ?? (r.policy === 'custom' ? r.remaining_json : '[]')) };
 }
 export async function jobById(db: Db, id: string): Promise<ScheduledJob | null> {
   const row = await db.prepare("SELECT * FROM scheduled_jobs WHERE id = ?").bind(id).first();
   return row ? read(row) : null;
 }
 export async function listJobs(db: Db, nowMs: number) {
-  const rows = (await db.prepare("SELECT * FROM scheduled_jobs ORDER BY created_at, id").all()).results;
+  const paused = !!(await planState(db)).paused;
+  const rows = (await db.prepare("SELECT * FROM scheduled_jobs ORDER BY plan_position, created_at, id").all()).results;
   return rows.map((r) => {
     const job = read(r);
-    return { ...job, nextOccurrences: job.status === "active" ? nextOccurrences(job.schedule, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel })) : [] };
+    return { ...job, nextOccurrences: !paused && job.status === "active" ? nextOccurrences(job.schedule, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel })) : [] };
   });
 }
 export interface JobChange {
@@ -94,17 +98,20 @@ export async function advanceCustomJobs(db: Db, fileId: string) {
   if (!reservation) return;
   const job = await jobById(db, reservation.job_id);
   if (!job) return;
-  const remaining = job.remaining.filter((v) => v.fileId !== fileId);
-  const status = job.policy === "custom" && !remaining.length ? "completed" : job.status;
   await db.batch([
-    db.prepare("UPDATE scheduled_jobs SET remaining_json=?,status=? WHERE id=?").bind(JSON.stringify(remaining), status, job.id),
+    // Filter the current database value, so concurrent edits cannot be overwritten by an old snapshot.
+    db.prepare(`UPDATE scheduled_jobs SET remaining_json=(SELECT json_group_array(json(value)) FROM json_each(remaining_json) WHERE json_extract(value,'$.fileId')<>?),
+      status=CASE WHEN policy='custom' AND NOT EXISTS(SELECT 1 FROM json_each(remaining_json) WHERE json_extract(value,'$.fileId')<>?) THEN 'completed' ELSE status END
+      WHERE id=? AND EXISTS(SELECT 1 FROM job_reservations WHERE file_id=? AND job_id=?)`).bind(fileId,fileId,job.id,fileId,job.id),
     db.prepare("DELETE FROM job_reservations WHERE file_id=? AND job_id=?").bind(fileId, job.id),
+    db.prepare('UPDATE publishing_plan SET revision=revision+1 WHERE id=1'),
   ]);
 }
 
 /** Durable per-job claims survive cancellation/replacement of GitHub's single pending concurrency slot. */
 export async function dispatchJobs(env: Env, nowMs: number, fetchFn: FetchFn) {
   const db = env.DB;
+  if ((await planState(db)).paused) return { action: 'plan_paused' };
   const jobs = (await listJobs(db, nowMs)).filter((j) => j.status === "active");
   const claims: { key: string; version: number; jobId: string }[] = [];
   for (const job of jobs) {

@@ -2,72 +2,83 @@
 
 ## The "Publish video" form (Actions → Publish video → Run workflow)
 
-GitHub shows all form fields every time; fields that don't apply are ignored and the summary says so.
-The default form action is Scheduled → List jobs, which does not publish or change settings.
-The dropdowns are static — they don't show your saved settings. To see those, run **Tools → status**
-(or read the summary of any run).
+There is one publishing plan. You do not name, create or delete separate jobs. Scheduled mode offers
+**Edit / Pause / Resume**. GitHub shows all fields every time; manual-only fields are ignored in scheduled
+mode and plan-only fields are ignored for one-off uploads. The default is Scheduled → Edit with a blank
+plan, which simply reports the saved plan without changing it.
 
 | Field | Meaning |
 |---|---|
-| `run_mode` | `manual_now` publishes once; `automated` manages named scheduled jobs without publishing immediately. |
-| `manual_schedule_action` | Manual only: `keep_schedule` (default) preserves every existing job; `stop_schedule` stops all active jobs before the one-off upload. |
-| `job_action` | Scheduled only: `create`, `edit`, `delete`, or `list` (safe default). No Pause/Resume controls. |
-| `job_name` | Create: unique new name. Edit/Delete: an existing name or ID copied from List jobs. Ignored for List/manual. |
-| `video_selection` | `fifo`, `lifo`, `random`, `custom`, `rule`, or `keep_existing`. Create requires a real choice. Edit can keep the saved rule. Manual choices apply only to that upload. |
-| `custom_video_name` | Manual Custom: one exact filename. Scheduled Custom: ordered CSV/newline list of exact filenames, quoting names containing commas. Blank on Edit preserves the remaining list. |
-| `video_rule` | Scheduled `rule`: plain-English selection instruction, interpreted once by Workers AI, validated and shown in the run summary. Blank on Edit preserves an existing title rule. |
-| `schedule` | Europe/Sarajevo weekly times. Required for Create; blank on Edit retains only that job's times. Ignored for List/Delete/manual. |
+| `run_mode` | `automated` edits/pauses/resumes the plan, never publishes immediately. `manual_now` publishes one video now. |
+| `plan_action` | `edit` replaces the complete plan when text is supplied; `pause` and `resume` retain its rules and Custom progress. |
+| `publishing_plan` | Pair every weekly timetable with its selection rule, separated by newlines or ` | `. Blank Edit retains the saved pairs and Custom progress. Ignored for Pause/Resume/manual. |
+| `video_selection` | Manual only: free text such as `lifo`, `random`, a plain-English title rule, or `custom: "Exact filename.mp4"`. Blank uses the saved one-off default. |
+| `manual_schedule_action` | Manual only: `keep_schedule` (default) leaves the plan untouched; `pause_schedule` pauses it before the one-off upload. |
 
-### Named jobs
+### Write paired timetables and rules
 
-Create adds a separate job without changing existing jobs. Duplicate names fail; names are matched
-case-insensitively. Edit changes only the named job and invalidates its older queued occurrences, leaving
-other jobs valid. Delete removes only that job and releases its unused Custom reservations; video files
-and published posts are not deleted. Unknown names fail rather than creating a new job by accident.
-
-**List jobs** ignores all other form fields and reports every job's name, times, selection rule, status,
-next occurrence and **every remaining Custom filename in publication order**, as well as the count.
-A Custom job publishes one item per occurrence, advances only after confirmed archival, and becomes
-completed when its queue is empty. Missing files or uncertain/partial outcomes retain the queue and
-require editing/recovery; the job never silently switches to an automatic video. Blank Custom input
-on Edit keeps progress; entering a replacement list replaces only that job's remaining queue.
-
-Files in exact Custom lists are reserved from other jobs and manual selections. FIFO/LIFO/Random and
-title-rule jobs share the remaining live source folder. A video archived by one job is no longer available
-to another. Outro assets are excluded from automatic rules and cannot be scheduled as standalone Custom
-entries; deliberate manual Custom outro publication remains available.
-
-For example, create `friday-newest` with `Fri 05:00` + LIFO, and separately create `midweek-random` with
-`Wed 17:00` + Random. To change only the first job's rule, Edit `friday-newest`, leave schedule blank,
-and choose FIFO. To stop the second job, Delete `midweek-random`.
-
-### Plain-English selection rules
-
-Choose `video_selection = rule` and enter, for example:
+For example, enter this as lines or as one line with ` | ` between entries:
 
 ```text
-Pick a random video whose title ends with [available].
+Monday and Wednesday at 06:00: newest video first
+Friday at 21:00: Pick a random video whose title ends with [available].
+Sunday at 18:00: publish this list in order: "Video A.mp4", "Video B.mp4"
 ```
 
-The existing Cloudflare Workers AI connection interprets the sentence at configuration time, separately
-from caption generation. The summary shows the saved interpretation, such as literal, case-insensitive
-`ends_with "[available]"; RANDOM`. Runs then apply that saved rule consistently without an AI decision
-every time. Matching checks the title before a known video extension, so `Lesson [available].mp4`
-matches an ending rule, while `Lesson [available] draft.mp4` does not.
+The timetable comes first, followed by a colon and space, then its rule. `=>` can also separate them.
+Use **weekly weekdays and times**, in Europe/Sarajevo time, rather than calendar dates or relative dates.
+The parser pairs each timetable with its rule before interpreting it; rules never depend on a matching
+position in a separate field. Overlapping occurrences (two rules for the same weekday/time) are rejected.
+There can be at most 20 entries and 50 weekly occurrences. Title-rule interpretation uses the existing
+Workers AI connection at Edit time; scheduled runs use the saved interpretation without calling AI again.
+Simple FIFO/LIFO/Random and exact lists are interpreted directly.
 
-Supported interpretation: FIFO/LIFO/Random, optionally one literal title contains/starts-with/ends-with
-condition. Ambiguous/unsupported requests fail before saving rather than becoming an approximate rule.
-No code, regex, wildcards, content understanding or arbitrary file operations are executed. Use
-**Tools → rule_preview**, putting the sentence in `target`, to inspect the interpretation without saving.
+Supported selections:
 
-Title-rule jobs include future matching uploads. When no eligible file matches, they skip the occurrence
-and wait for future matches. List jobs shows the rule and titles matching now; pending publishing outcomes
-may hold a matching file. A fixed Custom list, in contrast, finishes when its entered queue is exhausted.
+- `fifo` / `oldest video first`: oldest Drive upload/creation date.
+- `lifo` / `newest video first`: newest Drive upload/creation date.
+- `random`: an eligible random source video.
+- `custom: "First.mp4", "Second.mp4"` or `publish this list in order: ...`: a fixed ordered list of exact
+  Drive filenames, including extensions. Quote names containing commas or `|`; double an embedded quote.
+- Plain English such as `Pick a random video whose title ends with [available].`: FIFO/LIFO/Random,
+  optionally one literal, case-insensitive title contains/starts-with/ends-with condition. Matching checks
+  the title before its video extension, so `Lesson [available].mp4` matches that ending condition.
+
+Ambiguous or unsupported schedules/rules fail before anything is saved. No regex, arbitrary code,
+video-content understanding or external actions are executed. **Tools → plan_preview** interprets a plan
+entered in `target`, without saving it or publishing; Custom filename existence is validated when saving.
+The summary after Edit shows the saved interpretation, next times, a copyable plan and every remaining
+Custom filename in order. **Tools → status** shows the same saved plan.
+
+### Edit, Pause and Resume
+
+**Edit** with nonblank plan text replaces the complete set of timetable/rule pairs. Include all pairs you
+want to retain; omit a pair to remove it. No video files or published posts are deleted. Blank Edit leaves
+all pairs and progress unchanged (outro fields can still update the plan's outro choices). Edits validate
+and save atomically, and invalidate older queued scheduled work.
+
+An unchanged ordered Custom list keeps its remaining progress even if moved to different days, reordered
+within the plan, or resubmitted with already archived filenames. A completed unchanged list stays completed.
+Changing the list itself defines a replacement list, whose filenames must all exist in the source folder.
+To retain progress when editing a list, enter only the desired remaining filenames. Edit while paused
+keeps the plan paused; use Resume explicitly to restart it.
+
+**Pause** retains all timetables, rules, outro choices, reservations and remaining Custom lists. It cancels
+queued scheduled occurrences and prevents further publishing steps in running scheduled work. Posts
+already submitted to a platform cannot necessarily be recalled. **Resume** continues at the next future
+slot; paused or missed occurrences are not backfilled. Pause/Resume ignore the text and outro fields.
+
+A Custom list publishes one item per occurrence and advances only after confirmed archival. Partial,
+uncertain or missing files keep the head in place; the list never falls back to an unrelated video.
+An empty list completes. Title-filter and automatic selections continue waiting for future eligible
+uploads when none remain. Exact-list videos are reserved from other plan entries and manual selections.
+Outros are excluded from automatic rules and cannot be scheduled as standalone Custom items; deliberate
+manual `custom: "outro"` remains available.
 
 ### Outro fields (`outro_youtube`, `outro_tiktok`, `outro_instagram`, `outro_facebook`)
 
 - Enter the exact filename of a clip in the Drive folder (as Drive shows it) to choose that platform's outro.
-- **With scheduled Create/Edit** the choice is **saved for that job** and used for its posts until edited.
+- **With scheduled Edit** the choice is **saved for every timetable in the plan** and used for its posts until edited.
 - **With `manual_now`** the choice applies to **that one video only**; later posts go back to the saved outro.
 - **Empty = no change.** Type `none` to switch that platform's outro off.
 - **Default outro:** a platform with no saved choice uses the clip named exactly `outro` in the folder
@@ -80,18 +91,16 @@ may hold a matching file. A fixed Custom list, in contrast, finishes when its en
   contains "outro"** (name your outro clips e.g. `outro_youtube.mp4` so they are excluded even before you
   configure them). They can still be selected deliberately with `custom`.
 - If an outro file is deleted or moved out of the folder, that platform is published without it and the
-  summary says so. Changing outros never cancels an already-planned scheduled run.
+  summary says so. Editing saved outros invalidates older scheduled claims; manual outro overrides affect only that upload.
 
-### Manual uploads and existing jobs
+### Manual uploads and the plan
 
-`keep_schedule` leaves all jobs, their times, selection rules and remaining Custom lists untouched.
-The manual selection/outro applies only to the current upload. It does not enable jobs or change the
+`keep_schedule` leaves the plan, its paused/running state and remaining Custom lists untouched. The
+manual selection/outro applies only to the current upload. It does not enable scheduling or change the
 publishing kill switch. A reserved Custom entry cannot be stolen by a one-off upload.
 
-`stop_schedule` marks all active named jobs stopped before the upload and invalidates their queued
-occurrences, retaining their settings and remaining queues. Edit a stopped job to start it again from its
-next future occurrence, or Delete it to remove it and release reservations. There are no separate
-Pause/Resume actions. Already-submitted platform publications cannot necessarily be recalled.
+`pause_schedule` pauses the plan before the upload, retaining its configuration and lists. Restart it
+later with Scheduled → Resume. One-off uploads work while the scheduled plan is paused.
 
 ## Schedule syntax
 
@@ -99,8 +108,8 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 
 - Practical: `tuesday-5pm monday-6am friday 9-pm` → `Mon 06:00; Tue 17:00; Fri 21:00`
 - Recommended format: `Mon 06:00; Wed 17:00; Fri 21:00` (24-hour clock).
-- Select `run_mode = automated`, then Create/Edit and a job name. Create requires times; blank on Edit
-  keeps that job's timetable. The next upload is at the next future slot, never immediately.
+- Select `run_mode = automated`, then Edit, and pair each timetable with a rule in `publishing_plan`.
+  Blank retains the plan. The next upload is at a future slot, never immediately.
 - Also accepted: `fri 5 a.m.`, `wed 19.30`, `mon 0600`, `tue 17h`, `noon`, `midnight`, `mon wed 5pm`
   (both days 17:00), `mon 6am 6pm` (two times), Bosnian day names (`petak 05:00`).
 - Rejected with an explanation (old settings kept): `friday 9` (am or pm?), `5pm` (no day), `fri 13pm`,
@@ -113,8 +122,8 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
 
 | Action | What it does | Publishes? |
 |---|---|---|
-| `status` | All named jobs with full remaining Custom lists, defaults, next occurrences, recent runs and open publications | no |
-| `rule_preview` | Interpret the plain-English instruction in `target` without saving or publishing | no |
+| `status` | Saved plan, paused/running state, full remaining Custom lists, defaults, next times, recent runs and open publications | no |
+| `plan_preview` | Interpret paired timetables/rules in `target` without saving or publishing | no |
 | `verify` | Checks every account identity, permission, folder, Buffer schema, temporary-hosting privacy, free caption model, Worker target | no |
 | `preview` | Read-only selection + media/format plan + captions + Story renders (artifact). `target` = optional filename | no |
 | `dispatch_test` | Worker dispatches the scheduled workflow in non-publishing verification mode | no |
@@ -148,8 +157,8 @@ Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically
   A retry targeting an old run will not resend a destination that succeeded in a later retry.
   **Uncertain** (e.g. a response lost after the publish request) is never retried
   automatically: check the account, then `resolve_publication`.
-- Editing/deleting a job invalidates only its queued occurrences. Manual `stop_schedule` stops all active jobs.
-  Manual `keep_schedule` leaves all other runs valid. The kill switch
+- Editing or pausing the plan invalidates older scheduled occurrences. Manual `pause_schedule` pauses it.
+  Manual `keep_schedule` leaves scheduled work valid. The kill switch
   is re-checked immediately before each live publication step.
 
 ## Upload dates and the Published videos folder
@@ -189,7 +198,7 @@ Every file in Google Drive has a permanent ID (the long code in its link, e.g.
 "Manage versions", keeps the ID; uploading a separate copy creates a new ID. The pipeline tracks videos by
 this ID while publication or cleanup is pending; renaming or replacing content does not bypass those
 recovery checkpoints. Once the confirmed source is removed and checkpoints are cleared, a newly uploaded
-copy (or a source deliberately restored to the folder) is eligible again, subject to live job reservations.
+copy (or a source deliberately restored to the folder) is eligible again, subject to live Custom-list reservations.
 
 ## Captions (English)
 
@@ -215,9 +224,9 @@ Bosnian). A Bosnian word or phrase from the topic may appear, spelled with corre
 - TikTok Stories: unsupported (no API) — reported as manual.
 
 
-## Jobs due together
+## Timetables due together
 
-The Worker durably claims each due job independently, then dispatches a batch that processes pending job
-occurrences sequentially. This avoids losing a job if GitHub replaces an older pending concurrency run.
-Another batch can drain still-pending claims; started claims cannot be executed twice. One job failing
-does not discard the other jobs. Missed clock ticks are not invented or backfilled.
+The Worker durably claims each due plan entry independently, then dispatches a batch that processes pending
+occurrences sequentially. This avoids losing an occurrence if GitHub replaces an older pending concurrency run.
+Another batch can drain still-pending claims; started claims cannot be executed twice. One entry failing
+does not discard the other entries. Missed clock ticks are not invented or backfilled.
