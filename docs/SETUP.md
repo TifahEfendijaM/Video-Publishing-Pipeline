@@ -139,3 +139,19 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 | Upload-Post (YouTube) | free plan, 10 uploads/month, no card |
 | Buffer | your existing plan; the API is included on all plans (free: 3,000 requests/30 days; we poll once per minute, ≤20 per post) |
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |
+
+
+## Updating named-job scheduling
+
+During the update, disable live publishing, merge the tested form/runner changes and deploy the updated
+Worker. Deployment applies migration `0004_scheduled_jobs.sql`: an enabled old singleton becomes
+`Default schedule`, retaining its times, automatic policy, outro settings and next Custom override.
+An inactive old schedule creates no active job. The singleton is disabled to prevent double dispatch;
+older queued singleton claims fail closed. The old automated-configuration API returns a clear retirement
+error rather than silently overwriting named jobs.
+
+The new form needs the updated Worker and jobs migration before named-job commands can run. An older
+Worker cannot silently interpret the new manual Keep choice as Stop: the separate endpoint fails closed.
+Run Tools → verify/status and optionally rule_preview, then restore the previous publishing kill switch.
+No user video needs to be published as an activation test. Job settings and pending Custom lists are kept
+in D1; archived videos still leave no permanent selection-history cursor.

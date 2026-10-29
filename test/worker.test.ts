@@ -122,6 +122,50 @@ describe("configuration", () => {
     expect(v.nextOccurrences).toEqual([]); // nothing planned
   });
 
+  it("keep_schedule preserves every saved setting, including policy, pending custom, version and next occurrences", async () => {
+    const e = env();
+    await configureAutomated(e.DB, { scheduleText: "wed 19:00; fri 05:00", selectionPolicy: "random", pendingCustom: { fileId: "custom_video_id_123", fileName: "next.mp4" } }, NOW);
+    await setPublishing(e.DB, true, "test", NOW);
+    await setOutros(e.DB, { youtube: { fileId: "outro_video_id_123", fileName: "outro.mp4" } }, "test", NOW);
+    const before = await getSettings(e.DB);
+    const initial = await configureManual(e.DB, { scheduleBehavior: "keep", selectionPolicy: "fifo", actor: "manual" }, NOW + 1);
+    expect(await getSettings(e.DB)).toEqual(before);
+    expect(initial.manualScheduleBehavior).toBe("keep");
+    expect(initial.settings.selectionPolicy).toBe("random");
+    expect(initial.nextOccurrences.length).toBeGreaterThan(0);
+    const later = await configureManual(e.DB, { scheduleBehavior: "keep", selectionPolicy: null }, NOW + 2);
+    expect(later.nextOccurrences).toEqual(initial.nextOccurrences);
+    expect(await getSettings(e.DB)).toEqual(before);
+  });
+
+  it("keeping an inactive schedule does not enable automation", async () => {
+    const e = env();
+    const before = await getSettings(e.DB);
+    const result = await configureManual(e.DB, { scheduleBehavior: "keep", selectionPolicy: "random" }, NOW);
+    expect(result.settings).toEqual(before);
+    expect(result.nextOccurrences).toEqual([]);
+  });
+
+  it("explicit stop_schedule disables automation and cancels the custom override, retaining timetable and automatic policy", async () => {
+    const e = env();
+    await configureAutomated(e.DB, { scheduleText: "wed 19:00", selectionPolicy: "lifo", pendingCustom: { fileId: "custom_video_id_123", fileName: "next.mp4" } }, NOW);
+    const before = await getSettings(e.DB);
+    const result = await configureManual(e.DB, { scheduleBehavior: "stop", selectionPolicy: "random" }, NOW + 1);
+    expect(result.settings.automationEnabled).toBe(false);
+    expect(result.settings.scheduleText).toBe(before.scheduleText);
+    expect(result.settings.selectionPolicy).toBe("lifo");
+    expect(result.settings.pendingCustom).toBeNull();
+    expect(result.settings.configVersion).toBe(before.configVersion + 1);
+    expect(result.manualScheduleBehavior).toBe("stop");
+  });
+
+  it("rejects unknown manual schedule behavior without changing settings", async () => {
+    const e = env();
+    const before = await getSettings(e.DB);
+    await expect(configureManual(e.DB, { scheduleBehavior: "replace" as any }, NOW)).rejects.toThrow(/invalid manual schedule behavior/);
+    expect(await getSettings(e.DB)).toEqual(before);
+  });
+
   it("submitting automated repeatedly does not create duplicate schedulers (one settings row, one claim per occurrence)", async () => {
     const e = env();
     await configureAutomated(e.DB, {}, NOW);
@@ -228,6 +272,26 @@ describe("scheduled run validation (stale / cancelled / duplicate)", () => {
     expect(r.reason).toMatch(/Automation was disabled/);
   });
 
+  it("a queued scheduled occurrence and its pending custom choice survive a keep_schedule manual upload", async () => {
+    const e = env();
+    await configureAutomated(e.DB, { pendingCustom: { fileId: "custom_video_id_123", fileName: "next.mp4" } }, NOW);
+    await setPublishing(e.DB, true, "test", NOW);
+    const gh = fakeGitHub();
+    await handleScheduled(e, T("2026-10-09T03:00:00Z"), gh.fetchFn);
+    const inputs = gh.calls[0].body.inputs;
+    const before = await getSettings(e.DB);
+    await configureManual(e.DB, { scheduleBehavior: "keep", selectionPolicy: "random" }, NOW + 5);
+    expect(await getSettings(e.DB)).toEqual(before);
+    const scheduled = await beginRun(e.DB, { origin: "scheduled", occurrenceKey: inputs.occurrence_key, claimToken: inputs.claim_token }, NOW + 10);
+    expect(scheduled.allowed).toBe(true);
+    expect((await mayPublish(e.DB, scheduled.runId!)).allowed).toBe(true);
+    const manual = await beginRun(e.DB, { origin: "manual" }, NOW + 11);
+    expect((await consumeCustom(e.DB, manual.runId!)).custom).toBeNull();
+    await configureManual(e.DB, { scheduleBehavior: "keep", selectionPolicy: "fifo" }, NOW + 12);
+    expect((await mayPublish(e.DB, scheduled.runId!)).allowed).toBe(true);
+    expect((await consumeCustom(e.DB, scheduled.runId!)).custom).toEqual({ fileId: "custom_video_id_123", fileName: "next.mp4" });
+  });
+
   it("queued run after a configuration update does not publish under the cancelled settings", async () => {
     const { e, inputs } = await dispatched();
     await configureAutomated(e.DB, { scheduleText: "sat 9am" }, NOW + 5);
@@ -282,6 +346,21 @@ describe("scheduled run validation (stale / cancelled / duplicate)", () => {
 });
 
 describe("HTTP API", () => {
+  it("requires an explicit Keep/Stop on the new route while preserving the legacy manual API", async () => {
+    const e = env();
+    await configureAutomated(e.DB, { scheduleText: "fri 05:00", selectionPolicy: "lifo" }, NOW);
+    const before = await getSettings(e.DB);
+    const request = (path: string, body: object) => new Request(`https://w${path}`, { method: "POST", headers: { authorization: `Bearer ${e.STATE_API_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    await expect(route(request("/api/config/manual-choice", { selectionPolicy: "random" }), e)).rejects.toThrow(/manual schedule choice required/);
+    expect(await getSettings(e.DB)).toEqual(before);
+    const keep = await route(request("/api/config/manual-choice", { scheduleBehavior: "keep", selectionPolicy: "random" }), e);
+    expect(keep.status).toBe(200);
+    expect((await keep.json()).manualScheduleBehavior).toBe("keep");
+    expect(await getSettings(e.DB)).toEqual(before);
+    await route(request("/api/config/manual", { selectionPolicy: "fifo" }), e);
+    expect((await getSettings(e.DB)).automationEnabled).toBe(false);
+  });
+
   it("requires the bearer token and validates config", async () => {
     const e = env();
     const unauth = await route(new Request("https://w/api/state"), e);
@@ -292,7 +371,7 @@ describe("HTTP API", () => {
       new Request("https://w/api/config/automated", { method: "POST", headers: { authorization: "Bearer state-secret-123456" }, body: JSON.stringify({ scheduleText: "fri 9" }) }),
       e,
     ).catch((x) => x);
-    expect(bad.status ?? 400).toBe(400);
+    expect(bad.status).toBe(410);
   });
 });
 
@@ -365,9 +444,8 @@ describe("outros", () => {
 describe("folder queue migration", () => {
   it("preserves saved settings, enables random, drops selection history and keeps upload recovery evidence", async () => {
     const db = makeDb(["0001_init.sql", "0002_outros.sql"]);
-    await configureAutomated(db, { scheduleText: "mon 06:00; fri 21:00", selectionPolicy: "lifo", pendingCustom: { fileId: "custom_video_id_123", fileName: "lesson.mp4" } }, NOW);
-    await setPublishing(db, true, "owner", NOW);
-    await setOutros(db, { youtube: { fileId: "outro_video_id_123", fileName: "outro.mp4" } }, "owner", NOW);
+    db.raw.prepare("UPDATE settings SET automation_enabled=1,automation_enabled_at=?,schedule_json=?,selection_policy='lifo',pending_custom_file_id='custom_video_id_123',pending_custom_file_name='lesson.mp4',pending_custom_config_version=2,publishing_enabled=1,config_version=2,outros_json=? WHERE id=1")
+      .run(new Date(NOW).toISOString(), JSON.stringify([{ day: 1, minute: 360 }, { day: 5, minute: 1260 }]), JSON.stringify({ youtube: { fileId: "outro_video_id_123", fileName: "outro.mp4" } }));
     const before = await getSettings(db);
     for (const file of ["confirmed", "missing-outcome"]) db.raw.prepare("INSERT INTO videos(file_id, first_observed_at, consumed) VALUES (?, ?, 1)").run(file, new Date(NOW).toISOString());
     await upsertPublication(db, { runId: "old", fileId: "confirmed", platform: "facebook", surface: "feed", status: "confirmed" }, NOW);
@@ -376,6 +454,7 @@ describe("folder queue migration", () => {
     expect(await publicationsFor(db, { fileId: "confirmed" })).toMatchObject([{ status: "confirmed" }]);
     expect(await publicationsFor(db, { fileId: "missing-outcome" })).toMatchObject([{ status: "uncertain", platform: "pipeline" }]);
     expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name = 'videos'").get()).toBeUndefined();
+    db.raw.exec(readFileSync(new URL("../worker/migrations/0004_scheduled_jobs.sql", import.meta.url), "utf8"));
     await configureAutomated(db, { selectionPolicy: "random" }, NOW + 1);
     expect((await getSettings(db)).selectionPolicy).toBe("random");
     await configureManual(db, { selectionPolicy: "random" }, NOW + 2);

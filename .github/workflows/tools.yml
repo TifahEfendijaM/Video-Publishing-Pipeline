@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "status | verify | preview | dispatch_test | publishing_enable | publishing_disable | reconcile | resolve_publication | retry_failed"
+        description: "status | verify | preview | dispatch_test | publishing_enable | publishing_disable | reconcile | resolve_publication | retry_failed | rule_preview"
         type: choice
         required: true
         default: status
-        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed]
+        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed, rule_preview]
       target:
-        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. Otherwise ignored."
+        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. rule_preview: plain-English selection rule. Otherwise ignored."
         type: string
         required: false
       resolution:

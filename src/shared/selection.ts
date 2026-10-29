@@ -59,6 +59,8 @@ export interface SelectionInput {
   videos: FolderVideo[]; // successful listing of the folder (videos only)
   random?: () => number; // injectable uniform draw in [0, 1), defaults to Math.random
   excludeIds?: Set<string>; // configured outro clips: never picked automatically (custom may still pick them)
+  reservedIds?: Set<string>; // exact-list files owned by another scheduled job
+  strictCustom?: boolean; // named Custom jobs never fall back to another video
   blockedIds?: Set<string>; // temporary pending/partial publications or confirmed files awaiting cleanup
 }
 
@@ -85,8 +87,8 @@ export function selectVideo(input: SelectionInput): SelectionResult {
     const r = resolveCustomName(input.customName, videos);
     return r.kind === "match" ? r.video.id : null;
   })() : null);
-  if (requested && input.blockedIds?.has(requested)) {
-    notes.push("The requested video has pending/partial publications or is awaiting Drive cleanup. Use the recovery tools before publishing it again.");
+  if (requested && (input.blockedIds?.has(requested) || input.reservedIds?.has(requested))) {
+    notes.push("The requested video is reserved by a scheduled Custom list, has pending/partial publications or is awaiting Drive cleanup. Use the recovery tools before publishing it again.");
     return { video: null, method: "custom", fallback: null, notes, eligibleCount: ranked.length };
   }
 
@@ -95,6 +97,7 @@ export function selectVideo(input: SelectionInput): SelectionResult {
     if (v) {
       return { video: v, method: "custom", fallback: null, notes, eligibleCount: ranked.length };
     }
+    if (input.strictCustom) return { video: null, method: "custom", fallback: null, notes: [`The next Custom video "${input.pendingCustomFileName ?? input.pendingCustomFileId}" is missing; the queue was retained. Edit the job to fix it.`], eligibleCount: 0 };
     fallback = `The saved custom video "${input.pendingCustomFileName ?? input.pendingCustomFileId}" (ID ${input.pendingCustomFileId}) is no longer in the folder (deleted, trashed or moved); using the saved ${input.policy.toUpperCase()} policy.`;
   } else if (input.customName !== undefined && input.customName !== null) {
     const r = resolveCustomName(input.customName, videos);
@@ -110,7 +113,7 @@ export function selectVideo(input: SelectionInput): SelectionResult {
 
   const outros = ranked.filter((v) => input.excludeIds?.has(v.id) || isOutroName(v.name));
   if (outros.length) notes.push(`${outros.length} outro clip(s) excluded from automatic selection: ${outros.map((v) => v.name).join(", ")}.`);
-  const eligible = ranked.filter((v) => !outros.includes(v));
+  const eligible = ranked.filter((v) => !outros.includes(v) && !input.reservedIds?.has(v.id));
   let video: FolderVideo | null = null;
   if (eligible.length && input.policy === "random") {
     const draw = (input.random ?? Math.random)();

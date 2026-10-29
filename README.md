@@ -2,7 +2,7 @@
 
 Publishes one video at a time from the Google Drive folder **EasyBosnian educational videos** to
 Instagram (Reel + Story), Facebook (Reel or Page video + Story), TikTok (video post via Buffer) and
-YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), on a weekly Europe/Sarajevo schedule or on demand.
+YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), on independently named Europe/Sarajevo schedules or on demand.
 Separate from the image-card pipeline: no shared code, Worker, database or credentials.
 
 The source Drive folder is the publishing queue: confirmed sources move into **Published videos**,
@@ -11,10 +11,15 @@ upload dates, Random picks an eligible source, and Custom matches a filename. Pa
 stay protected from duplicates, and outro assets remain in place. The old consumed-video/entry-time table
 is removed. [Archive access and migration setup](docs/SETUP.md#drive-access-for-automatic-archival).
 
+Manual uploads default to **Keep schedule**; **Stop schedule** stops all active jobs before the one-off
+upload. Scheduled mode provides **Create / Edit / Delete / List jobs**, with independent times and rules.
+Custom lists are ordered and finite; plain-English title rules are interpreted when saved and include
+future matching files. List jobs shows the entire remaining list, not just a count.
+
 ```
 Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner)
-  ├─ reads saved Sarajevo schedule from D1           ├─ checks claim / kill switch / staleness
-  ├─ due? → atomic claim of the occurrence           ├─ Drive: list folder, upload dates, download once
+  ├─ reads independent Sarajevo jobs from D1           ├─ checks claim / kill switch / staleness
+  ├─ due? → durable per-job claims + batch           ├─ Drive: list folder, upload dates, download once
   └─ workflow_dispatch → scheduled-publish.yml ───▶  ├─ ffprobe → format plan; ffmpeg Story canvas
       (exact repo, workflow, branch; 1 attempt)      ├─ captions (generic, or free Workers AI, validated)
                                                      ├─ Meta Graph · Buffer (TikTok, Shorts) · Upload-Post (YT video)
