@@ -22,7 +22,7 @@ on:
         type: string
         required: false
       video_selection:
-        description: 'Manual only: enter fifo, lifo, random, a plain-English title rule, or custom: "Exact filename.mp4". Blank uses the saved one-off default. Scheduled selection belongs inside publishing_plan.'
+        description: 'Manual only: video selection plus optional outro, e.g. custom: "Video.mp4"; outro: "End.mp4" or lifo; outro: none. One outro for all platforms. Blank uses saved defaults. Use default; outro: "End.mp4" to keep the default video rule.'
         type: string
         required: false
       manual_schedule_action:
@@ -31,22 +31,6 @@ on:
         required: true
         default: keep_schedule
         options: [keep_schedule, pause_schedule]
-      outro_youtube:
-        description: "Manual only: youtube outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
-        type: string
-        required: false
-      outro_tiktok:
-        description: "Manual only: tiktok outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
-        type: string
-        required: false
-      outro_instagram:
-        description: "Manual only: instagram outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
-        type: string
-        required: false
-      outro_facebook:
-        description: "Manual only: facebook outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
-        type: string
-        required: false
 
 permissions:
   contents: read
@@ -77,10 +61,6 @@ jobs:
           PUBLISHING_PLAN: ${{ inputs.publishing_plan }}
           MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
           VIDEO_SELECTION: ${{ inputs.video_selection }}
-          OUTRO_YOUTUBE: ${{ inputs.outro_youtube }}
-          OUTRO_TIKTOK: ${{ inputs.outro_tiktok }}
-          OUTRO_INSTAGRAM: ${{ inputs.outro_instagram }}
-          OUTRO_FACEBOOK: ${{ inputs.outro_facebook }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

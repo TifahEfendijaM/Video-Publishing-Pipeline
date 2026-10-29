@@ -6,7 +6,7 @@ import { planState } from '../worker/src/plan-state';
 import { advanceCustomJobs, dispatchJobs } from '../worker/src/jobs';
 import { beginRun, configureManual, mayPublish, setPublishing, type Env } from '../worker/src/logic';
 import { route } from '../worker/src/index';
-import { interpretPlan, interpretSelection, resolvePlan } from '../runner/src/publishing-plan';
+import { interpretPlan, interpretSelection, resolvePlan, interpretManualEntry, resolveManualEntry } from '../runner/src/publishing-plan';
 import type { PlanEntryInput } from '../src/shared/publishing-plan';
 import type { FolderVideo } from '../src/shared/selection';
 
@@ -195,5 +195,32 @@ describe('per-timetable outro text',()=> {
     const parsed=await interpretPlan('Mon 06:00: random; outro: "Missing.mp4"',model);
     expect(()=>resolvePlan(parsed,[],[])).toThrow(/missing or ambiguous/);
     for(const text of ['Mon 06:00: lifo; outro: "A.mp4", "B.mp4"','Mon 06:00: lifo; youtube outro: none; youtube outro: off','Mon 06:00: random; something: none']) await expect(interpretPlan(text,model)).rejects.toThrow();
+  });
+});
+
+
+describe('combined one-off entry',()=> {
+  it('resolves an exact video and one shared outro, including quoted punctuation',async()=> {
+    const outro={fileId:'outro_manual_12345',fileName:'End; yes, please.mp4'};
+    const input=await interpretManualEntry('custom: "First.mp4"; outro: "End; yes, please.mp4"',model);
+    const result=resolveManualEntry(input,[video(a),video(outro)]);
+    expect(result.pendingCustom).toEqual(a);
+    expect(Object.values(result.outroOverrides)).toEqual([outro,outro,outro,outro]);
+  });
+  it('supports blank/default selections, explicit none and plain-English title rules',async()=> {
+    expect(resolveManualEntry(await interpretManualEntry('',model),[])).toMatchObject({policyChoice:null,outroOverrides:{},pendingCustom:null});
+    const result=resolveManualEntry(await interpretManualEntry('default; outro: none',model),[]);
+    expect(result.policyChoice).toBeNull();expect(Object.values(result.outroOverrides)).toEqual([null,null,null,null]);
+    expect(resolveManualEntry(await interpretManualEntry('random video whose title ends with "[available]"; outro: none',model),[])).toMatchObject({policyChoice:'random',titleRule:{match:'ends_with',text:'[available]'}});
+  });
+  it('rejects platform-specific choices, duplicate outros and multiple one-off videos',async()=> {
+    for(const input of ['lifo; youtube outro: none','lifo; outro: none; outro: none','custom: "First.mp4", "Second.mp4"']) await expect(interpretManualEntry(input,model)).rejects.toThrow();
+  });
+  it('rejects missing or ambiguous requested video/outro files before configuration or publishing',async()=> {
+    const input=await interpretManualEntry('custom: "First.mp4"; outro: "Missing.mp4"',model);
+    expect(()=>resolveManualEntry(input,[video(a)])).toThrow(/missing or ambiguous/);
+    expect(()=>resolveManualEntry(input,[])).toThrow(/missing or ambiguous/);
+    const outro={fileId:'outro_manual_12345',fileName:'Missing.mp4'};
+    expect(()=>resolveManualEntry(input,[video(a),video(outro),video({...outro,fileId:'duplicate_12345'})])).toThrow(/missing or ambiguous/);
   });
 });

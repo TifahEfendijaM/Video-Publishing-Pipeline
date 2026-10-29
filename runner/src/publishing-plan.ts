@@ -34,22 +34,9 @@ export async function interpretPlan(text: string, model: CaptionModel) {
     if (!delimiter) throw new Error('Pair each timetable with a rule: Monday at 06:00: newest video first');
     const slots = parseSchedule(line.slice(0,delimiter.index));
     if (!slots) throw new Error('Each rule needs a weekly timetable');
-    const [rule, ...clauses] = splitOutsideQuotes(line.slice(delimiter.index+delimiter[0].length), c=>c===';');
-    const outroNames: NonNullable<SelectionEntry['outroNames']> = {};
-    for (const clause of clauses) {
-      const match = /^(?:(youtube|tiktok|instagram|facebook)\s+)?outro\s*:\s*(.+)$/i.exec(clause);
-      if (!match) throw new Error('Use ; outro: "Clip.mp4" or ; youtube outro: none after the selection rule');
-      const names = parseCustomList(match[2]);
-      if (names.length !== 1) throw new Error('Choose one outro filename per outro clause');
-      const name = /^(none|off)$/i.test(match[2].trim()) ? null : names[0];
-      const platforms = match[1] ? [match[1].toLowerCase()] : ['youtube','tiktok','instagram','facebook'];
-      for (const platform of platforms) {
-        if (platform in outroNames) throw new Error('Specify each platform outro only once in an entry');
-        outroNames[platform as keyof typeof outroNames] = name;
-      }
-    }
+    const {rule,outroNames} = parseOutroClauses(line.slice(delimiter.index+delimiter[0].length));
     const selection = await interpretSelection(rule,model);
-    entries.push({...selection,scheduleText:formatSchedule(slots), ...(clauses.length ? {outroNames} : {})});
+    entries.push({...selection,scheduleText:formatSchedule(slots), ...(Object.keys(outroNames).length ? {outroNames} : {})});
   }
   // Validate schedules/overlaps before any Drive reads or saved changes.
   validatePlanEntries(entries.map((entry,index)=>({...entry,custom:entry.filenames.map((fileName,i)=>({fileId:`preview_${index}_${String(i).padStart(5,'0')}`,fileName}))})));
@@ -81,15 +68,60 @@ export function resolvePlan(entries: (SelectionEntry & {scheduleText:string})[],
       const prior = saved.find(j=>JSON.stringify(j.originalCustom.map(v=>v.fileName.normalize('NFC')))===JSON.stringify(entry.filenames));
       custom = prior?.originalCustom ?? resolveCustomList(entry.filenames.map(n=>`"${n.replace(/"/g,'""')}"`).join(','),videos);
     }
-    const outros: NonNullable<PlanEntryInput['outros']> = {};
-    for (const [platform, name] of Object.entries(entry.outroNames ?? {})) {
-      if (name === null) outros[platform as keyof typeof outros] = null;
-      else {
-        const match = resolveCustomName(name, videos);
-        if (match.kind !== 'match') throw new Error(`Outro "${name}" is missing or ambiguous; no plan changes saved`);
-        outros[platform as keyof typeof outros] = {fileId:match.video.id,fileName:match.video.name};
-      }
-    }
+    const outros=resolveOutroChoices(entry.outroNames ?? {},videos);
     return {scheduleText:entry.scheduleText,policy:entry.policy,titleRule:entry.titleRule,custom, ...(entry.outroNames ? {outros} : {})};
   }));
+}
+
+function parseOutroClauses(text:string, perPlatform=true) {
+    const [rule, ...clauses] = splitOutsideQuotes(text, c=>c===';');
+    const outroNames: NonNullable<SelectionEntry['outroNames']> = {};
+    for (const clause of clauses) {
+      const match = /^(?:(youtube|tiktok|instagram|facebook)\s+)?outro\s*:\s*(.+)$/i.exec(clause);
+      if (!match) throw new Error('Use ; outro: "Clip.mp4" or ; youtube outro: none after the selection rule');
+      if (!perPlatform && match[1]) throw new Error('Manual uploads use one outro for all platforms; write ; outro: \"Clip.mp4\"');
+      const names = parseCustomList(match[2]);
+      if (names.length !== 1) throw new Error('Choose one outro filename per outro clause');
+      const name = /^(none|off)$/i.test(match[2].trim()) ? null : names[0];
+      const platforms = match[1] ? [match[1].toLowerCase()] : ['youtube','tiktok','instagram','facebook'];
+      for (const platform of platforms) {
+        if (platform in outroNames) throw new Error('Specify each platform outro only once in an entry');
+        outroNames[platform as keyof typeof outroNames] = name;
+      }
+    }
+  return {rule,outroNames};
+}
+
+export async function interpretManualEntry(text:string, model:CaptionModel) {
+  if (text.length>2000) throw new Error('Manual entry is too long (max 2000 characters)');
+  if (!text.trim()) return {selection:null,outroNames:{}};
+  const {rule,outroNames}=parseOutroClauses(text,false);
+  const selection=rule && rule.toLowerCase()!=='default' ? await interpretSelection(rule,model) : null;
+  if (selection?.policy==='custom' && selection.filenames.length!==1) throw new Error('A one-off upload takes exactly one Custom filename');
+  return {selection,outroNames};
+}
+
+export function resolveManualEntry(parsed:Awaited<ReturnType<typeof interpretManualEntry>>, videos:FolderVideo[]) {
+  let pendingCustom: CustomVideo | null=null;
+  if (parsed.selection?.policy==='custom') {
+    const match=resolveCustomName(parsed.selection.filenames[0],videos);
+    if (match.kind!=='match') throw new Error('The requested one-off filename is missing or ambiguous; nothing published');
+    pendingCustom={fileId:match.video.id,fileName:match.video.name};
+  }
+  const outros=resolveOutroChoices(parsed.outroNames,videos);
+  return {pendingCustom,outroOverrides:outros, titleRule:parsed.selection?.titleRule,
+    policyChoice:parsed.selection ? parsed.selection.titleRule?.order ?? (parsed.selection.policy==='custom' ? null : parsed.selection.policy as 'fifo'|'lifo'|'random') : null};
+}
+
+function resolveOutroChoices(names: NonNullable<SelectionEntry['outroNames']>, videos:FolderVideo[]) {
+  const outros: NonNullable<PlanEntryInput['outros']>={};
+  for (const [platform,name] of Object.entries(names)) {
+    if (name===null) outros[platform as keyof typeof outros]=null;
+    else {
+      const match=resolveCustomName(name,videos);
+      if(match.kind!=='match') throw new Error(`Outro "${name}" is missing or ambiguous; nothing saved or published`);
+      outros[platform as keyof typeof outros]={fileId:match.video.id,fileName:match.video.name};
+    }
+  }
+  return outros;
 }

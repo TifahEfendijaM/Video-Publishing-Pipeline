@@ -1,7 +1,7 @@
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
 import { interpretVideoRule } from "./video-rule";
-import { interpretPlan, interpretSelection, resolvePlan } from "./publishing-plan";
+import { interpretPlan, interpretManualEntry, resolveManualEntry, resolvePlan } from "./publishing-plan";
 // GitHub Actions runner entry point.
 //   configure  — "Publish video" form (run_mode manual_now | automated)
 //   scheduled  — dispatched by the Cloudflare Worker (or dispatch test)
@@ -14,7 +14,7 @@ import { StateClient } from "./state-client";
 import { Drive, DRIVE_SCOPES, serviceAccountEmail, serviceAccountToken, oauthAccessToken } from "./google";
 import { probe, renderStory, renderCanvas, renderWidescreen, concatWithOutro } from "./media-tools";
 import type { MediaInfo } from "../../src/shared/media";
-import { resolveCustomName, effectiveOutro } from "../../src/shared/selection";
+import { effectiveOutro } from "../../src/shared/selection";
 import { makeCaptions } from "./captioner";
 import { KvHosting, R2Hosting } from "./hosting";
 import { statSync } from "node:fs";
@@ -419,48 +419,12 @@ async function cmdConfigure() {
   const model = { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model };
   const actor = env("GITHUB_ACTOR") || "github";
   if (!["manual_now", "automated"].includes(mode)) throw new Error("run_mode must be manual_now or automated");
-  const outroInputs = { youtube: process.env.OUTRO_YOUTUBE ?? "", tiktok: process.env.OUTRO_TIKTOK ?? "", instagram: process.env.OUTRO_INSTAGRAM ?? "", facebook: process.env.OUTRO_FACEBOOK ?? "" };
-  /**
-   * Resolve the outro fields: empty = unchanged, "none" = off, filename = that clip (if exactly one file matches).
-   * save = true (automated): stored for all later runs. save = false (manual_now): applies to this run only.
-   */
-  const applyOutros = async (save: boolean): Promise<{ notes: string[]; changes: Record<string, { fileId: string; fileName: string } | null> }> => {
-    const entries = Object.entries(outroInputs).filter(([, v]) => v.trim() !== "");
-    if (!entries.length) return { notes: [], changes: {} };
-    const verb = save ? "saved" : "for this video only";
-    const notes: string[] = [];
-    const changes: Record<string, { fileId: string; fileName: string } | null> = {};
-    let videos: FolderVideo[] | null = null;
-    for (const [plat, raw] of entries) {
-      const val = raw.trim();
-      if (/^(none|remove|-)$/i.test(val)) {
-        changes[plat] = null;
-        notes.push(`${plat} outro switched off (${verb}).`);
-        continue;
-      }
-      videos ??= await (await drive()).listVideos(); // auth/network errors abort; never treated as "not found"
-      const r = resolveCustomName(val, videos);
-      if (r.kind === "match") {
-        changes[plat] = { fileId: r.video.id, fileName: r.video.name };
-        notes.push(`${plat} outro: ${r.video.name} (${verb}).`);
-      } else if (r.kind === "ambiguous") notes.push(`${plat} outro unchanged: ${r.count} files are named "${r.name}".`);
-      else notes.push(`${plat} outro unchanged: no video named "${val}" in the folder.`);
-    }
-    if (save && Object.keys(changes).length) await state.setOutros(changes, actor);
-    return { notes, changes };
-  };
-
   s.h(1, `EasyBosnian video — ${mode}`);
   if (mode === "manual_now") {
-    const parsed = selection ? await interpretSelection(selection, model) : null;
-    if (parsed?.policy === "custom" && parsed.filenames.length !== 1) throw new Error('A one-off upload takes one Custom filename');
-    let pendingCustom: { fileId: string; fileName: string } | null = null;
-    if (parsed?.policy === 'custom') {
-      const match = resolveCustomName(parsed.filenames[0], await (await drive()).listVideos());
-      if (match.kind !== 'match') throw new Error('The requested one-off filename is missing or ambiguous; nothing published');
-      pendingCustom = { fileId: match.video.id, fileName: match.video.name };
-    }
-    const policyChoice = parsed ? parsed.titleRule?.order ?? (parsed.policy === 'custom' ? null : parsed.policy as SelectionPolicy) : null;
+    const parsed = await interpretManualEntry(selection,model);
+    const needsFiles=parsed.selection?.policy==='custom' || Object.values(parsed.outroNames).some(name=>name!==null);
+    const resolved=resolveManualEntry(parsed,needsFiles ? await (await drive()).listVideos() : []);
+    const {pendingCustom,policyChoice,outroOverrides}=resolved;
     const scheduleAction = env("MANUAL_SCHEDULE_ACTION") || "keep_schedule";
     if (!["keep_schedule", "pause_schedule", "stop_schedule"].includes(scheduleAction)) throw new Error("Choose keep_schedule or pause_schedule");
     const scheduleBehavior = scheduleAction === "keep_schedule" ? "keep" : "stop";
@@ -468,7 +432,6 @@ async function cmdConfigure() {
     if (planText) ignored.push("publishing_plan (only used in automated mode)");
     const cfgView = await state.configureManual({ selectionPolicy: policyChoice, scheduleBehavior, actor });
     if (cfgView.manualScheduleBehavior !== scheduleBehavior) throw new Error("Worker does not support this manual schedule choice; deploy the updated Worker before publishing");
-    const { notes: outroNotes, changes: outroOverrides } = await applyOutros(false);
     const begin = await state.beginRun({ origin: "manual", githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
     s.kv([
       ["Origin", "manual (manual_now)"],
@@ -477,7 +440,7 @@ async function cmdConfigure() {
       ["Existing schedule", scheduleBehavior === "keep" ? "Kept unchanged; manual video selection is for this upload only" : "Plan paused before this upload; saved rules and remaining lists retained"],
       ["Ignored fields", ignored.join("; ") || "none"],
     ]);
-    if (outroNotes.length) s.list(outroNotes);
+    s.p(`One-off outro: ${outroDescription(outroOverrides).replace(/^; /,'') || 'saved default'}. This choice applies only to this upload.`);
     s.h(2, scheduleBehavior === "keep" ? "Saved configuration (schedule kept unchanged)" : "Saved configuration (plan paused before publishing)");
     s.kv(settingsRows(cfgView.settings, cfgView.nextOccurrences));
     try {
@@ -486,7 +449,7 @@ async function cmdConfigure() {
         origin: "manual",
         policy: policyChoice ?? cfgView.settings.selectionPolicy,
         pendingCustom,
-        titleRule: parsed?.titleRule,
+        titleRule: resolved.titleRule,
         outroOverrides,
         summary: s,
         state,
@@ -637,6 +600,11 @@ async function cmdTools() {
       s.write();
       throw new Error(`dispatch test failed with HTTP ${r.githubStatus}`);
     }
+  } else if (action === "manual_preview") {
+    const parsed=await interpretManualEntry(target,{accountId:env("CLOUDFLARE_ACCOUNT_ID"),token:sec("CLOUDFLARE_AI_TOKEN"),model:cfg.captions.model});
+    const resolved=resolveManualEntry(parsed,await (await drive()).listVideos());
+    s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
+    s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
   } else if (action === "plan_preview") {
     const interpreted = await interpretPlan(target, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
     s.p('Interpreted weekly plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving.');
