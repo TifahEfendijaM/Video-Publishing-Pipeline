@@ -39,7 +39,7 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
     const prior = candidates.find(j => j.scheduleText === entry.scheduleText) ?? (candidates.length === 1 ? candidates[0] : undefined);
     if (prior) used.add(prior.id);
     const remaining = prior ? prior.remaining : entry.custom;
-    const outroSource = prior ?? old.find(j => j.scheduleText === entry.scheduleText);
+    const outroSource = old.find(j => j.scheduleText === entry.scheduleText) ?? prior;
     return { entry, prior, remaining, position: index, id: prior?.id ?? randomToken().slice(0,24), name: `Plan entry ${index+1}`, outros: {...outroSource?.outros, ...entry.outros} };
   });
   const protectedIds = new Set<string>();

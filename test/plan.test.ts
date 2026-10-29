@@ -89,6 +89,12 @@ describe('one publishing plan',()=> {
     await expect(edit(db,[{...custom(),custom:[outro],outros:{youtube:outro}}])).rejects.toThrow(/Outros/);
     await expect(changePlan(db,{action:'edit',expectedRevision:p.revision,outros:{youtube:outro}},NOW)).rejects.toThrow(/universal/);
   });
+  it('keeps omitted outros attached to their timetable when selection rules are exchanged',async()=> {
+    const db=makeDb(); const first={fileId:'outro_first_12345',fileName:'A.mp4'}, second={fileId:'outro_second_12345',fileName:'B.mp4'};
+    await edit(db,[{...automatic('Mon 06:00'),outros:{youtube:first}},{...automatic('Fri 21:00'),policy:'random',outros:{youtube:second}}]);
+    const p=await edit(db,[{...automatic('Mon 06:00'),policy:'random'},automatic('Fri 21:00')]);
+    expect(p.entries.map(e=>e.outros.youtube)).toEqual([first,second]);
+  });
   it('pauses queued and in-flight work, retains Custom lists, and resumes only future slots',async()=> {
     const e=env();const db=e.DB as ReturnType<typeof makeDb>;
     await edit(db,[automatic(),custom()]);await setPublishing(db,true,'test',NOW);
