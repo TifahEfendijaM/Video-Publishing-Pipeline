@@ -1,64 +1,50 @@
 name: Publish video
 
 # The main human control. GitHub shows every field; fields that don't apply to the chosen
-# run_mode / video_selection are ignored (and the run summary says so).
+# run_mode / plan_action are ignored (and the run summary says so).
 on:
   workflow_dispatch:
     inputs:
       run_mode:
-        description: "manual_now = publish one video now (choose below whether to keep or stop automation). automated = Create/Edit/Delete/List named scheduled jobs; never publishes immediately."
+        description: "automated = Edit/Pause/Resume the publishing plan; never publishes immediately. manual_now = publish one video now."
         type: choice
         required: true
-        options: [manual_now, automated]
+        options: [automated, manual_now]
         default: automated
-      manual_schedule_action:
-        description: "Manual now only: keep_schedule leaves existing automation/settings unchanged (default); stop_schedule stops all scheduled jobs before this upload. Ignored for automated."
+      plan_action:
+        description: "Scheduled plan only: Edit saves the complete plan (blank retains it and reports settings). Pause/Resume retain all rules and Custom progress."
         type: choice
+        default: edit
         required: true
-        default: keep_schedule
-        options: [keep_schedule, stop_schedule]
-      job_action:
-        description: "Scheduled jobs only: create adds a new independent job; edit changes one; delete removes one; list reports all jobs and remaining Custom titles."
-        type: choice
-        default: list
-        required: true
-        options: [list, create, edit, delete]
-      job_name:
-        description: "Create: unique new job name. Edit/Delete: existing name or ID from List jobs. Ignored for List/manual."
-        type: string
-        required: false
-      video_rule:
-        description: 'Scheduled rule only: plain English, e.g. Pick a random video whose title ends with [available]. Blank on Edit retains its interpreted rule.'
+        options: [edit, pause, resume]
+      publishing_plan:
+        description: 'Scheduled Edit only. Pair times and rules, separated by | or newlines. Example: Mon and Wed 06:00: lifo | Fri 21:00: random | Sun 18:00: custom: "Video A.mp4", "Video B.mp4". All times Europe/Sarajevo.'
         type: string
         required: false
       video_selection:
-        description: "keep_existing = retain saved rule on Edit. fifo/lifo/random = automatic. custom = exact filename (manual) or ordered list (scheduled). rule = plain English (scheduled)."
+        description: 'Manual only: enter fifo, lifo, random, a plain-English title rule, or custom: "Exact filename.mp4". Blank uses the saved one-off default. Scheduled selection belongs inside publishing_plan.'
+        type: string
+        required: false
+      manual_schedule_action:
+        description: "Manual only: keep_schedule leaves the plan unchanged (default); pause_schedule pauses it before this upload. Resume later with the plan action."
         type: choice
         required: true
-        default: keep_existing
-        options: [keep_existing, fifo, lifo, random, custom, rule]
-      custom_video_name:
-        description: "Manual: one exact filename. Scheduled Custom: comma-separated exact filenames in order; quote names containing commas. Blank on Edit retains the remaining list."
-        type: string
-        required: false
-      schedule:
-        description: "Weekly Europe/Sarajevo times, e.g. Mon 06:00; Wed 17:00; Fri 21:00. Create: required. Edit: blank keeps this job's times. Ignored for Delete/List/manual."
-        type: string
-        required: false
+        default: keep_schedule
+        options: [keep_schedule, pause_schedule]
       outro_youtube:
-        description: "Outro for YouTube (both the video and the Short): full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for this job. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Outro for YouTube (both the video and the Short): full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
       outro_tiktok:
-        description: "Outro for TikTok: full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for this job. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Outro for TikTok: full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
       outro_instagram:
-        description: "Outro for the Instagram Reel: full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for this job. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Outro for the Instagram Reel: full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
       outro_facebook:
-        description: "Outro for the Facebook video: full filename of a clip in the Drive folder. manual_now: this video only. automated: saved for this job. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Outro for the Facebook video: full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
         type: string
         required: false
 
@@ -81,18 +67,16 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install ffmpeg
+        if: inputs.run_mode == 'manual_now'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
       - name: Run
         run: npx tsx runner/src/main.ts configure
         env:
           RUN_MODE: ${{ inputs.run_mode }}
-          JOB_ACTION: ${{ inputs.job_action }}
-          JOB_NAME: ${{ inputs.job_name }}
-          VIDEO_RULE: ${{ inputs.video_rule }}
+          PLAN_ACTION: ${{ inputs.plan_action }}
+          PUBLISHING_PLAN: ${{ inputs.publishing_plan }}
           MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
           VIDEO_SELECTION: ${{ inputs.video_selection }}
-          CUSTOM_VIDEO_NAME: ${{ inputs.custom_video_name }}
-          SCHEDULE_TEXT: ${{ inputs.schedule }}
           OUTRO_YOUTUBE: ${{ inputs.outro_youtube }}
           OUTRO_TIKTOK: ${{ inputs.outro_tiktok }}
           OUTRO_INSTAGRAM: ${{ inputs.outro_instagram }}

@@ -141,17 +141,17 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |
 
 
-## Updating named-job scheduling
+## Updating to the single publishing plan
 
-During the update, disable live publishing, merge the tested form/runner changes and deploy the updated
-Worker. Deployment applies migration `0004_scheduled_jobs.sql`: an enabled old singleton becomes
-`Default schedule`, retaining its times, automatic policy, outro settings and next Custom override.
-An inactive old schedule creates no active job. The singleton is disabled to prevent double dispatch;
-older queued singleton claims fail closed. The old automated-configuration API returns a clear retirement
-error rather than silently overwriting named jobs.
+Disable live publishing during the update, merge the tested form/runner changes and deploy the updated
+Worker. Migration `0005_publishing_plan.sql` keeps existing timetable/rule entries, remaining lists,
+reservations and outro settings under one plan, without creating a publishing occurrence. Original
+Custom definitions are retained so unchanged lists keep progress across edits; completed legacy lists
+with no remaining definition are still shown as completed and can be replaced with a new list.
+If any old entry was stopped, the migrated plan starts paused, avoiding an accidental restart.
+The named-job mutation endpoint is retired; old forms fail clearly rather than changing the plan.
 
-The new form needs the updated Worker and jobs migration before named-job commands can run. An older
-Worker cannot silently interpret the new manual Keep choice as Stop: the separate endpoint fails closed.
-Run Tools → verify/status and optionally rule_preview, then restore the previous publishing kill switch.
-No user video needs to be published as an activation test. Job settings and pending Custom lists are kept
-in D1; archived videos still leave no permanent selection-history cursor.
+The new form requires the updated Worker and migration before Edit/Pause/Resume can run. Read the live
+plan with Tools → status or a blank Scheduled → Edit, run Tools → verify and dispatch_test, and optionally
+plan_preview; then restore the previous publishing kill switch. No live video is needed as an activation
+test. The global publishing switch and the plan's Pause/Resume control are independent.

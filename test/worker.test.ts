@@ -142,7 +142,7 @@ describe("configuration", () => {
     const e = env();
     const before = await getSettings(e.DB);
     const result = await configureManual(e.DB, { scheduleBehavior: "keep", selectionPolicy: "random" }, NOW);
-    expect(result.settings).toEqual(before);
+    expect(result.settings).toEqual({ ...before, planPaused: false });
     expect(result.nextOccurrences).toEqual([]);
   });
 
@@ -455,6 +455,7 @@ describe("folder queue migration", () => {
     expect(await publicationsFor(db, { fileId: "missing-outcome" })).toMatchObject([{ status: "uncertain", platform: "pipeline" }]);
     expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name = 'videos'").get()).toBeUndefined();
     db.raw.exec(readFileSync(new URL("../worker/migrations/0004_scheduled_jobs.sql", import.meta.url), "utf8"));
+    db.raw.exec(readFileSync(new URL("../worker/migrations/0005_publishing_plan.sql", import.meta.url), "utf8"));
     await configureAutomated(db, { selectionPolicy: "random" }, NOW + 1);
     expect((await getSettings(db)).selectionPolicy).toBe("random");
     await configureManual(db, { selectionPolicy: "random" }, NOW + 2);
