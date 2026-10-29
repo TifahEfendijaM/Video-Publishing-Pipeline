@@ -32,19 +32,19 @@ on:
         default: keep_schedule
         options: [keep_schedule, pause_schedule]
       outro_youtube:
-        description: "Outro for YouTube (both the video and the Short): full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Manual only: youtube outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
         type: string
         required: false
       outro_tiktok:
-        description: "Outro for TikTok: full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Manual only: tiktok outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
         type: string
         required: false
       outro_instagram:
-        description: "Outro for the Instagram Reel: full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Manual only: instagram outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
         type: string
         required: false
       outro_facebook:
-        description: "Outro for the Facebook video: full filename of a clip in the Drive folder. manual_now: this video only. automated Edit: saved for the whole plan. Empty = saved outro (default: the clip named outro). Type none for no outro."
+        description: "Manual only: facebook outro filename for this one upload. Blank keeps the saved default; none disables it. Scheduled outros belong inside each publishing_plan entry."
         type: string
         required: false
 

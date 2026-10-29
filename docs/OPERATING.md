@@ -54,7 +54,7 @@ Custom filename in order. **Tools → status** shows the same saved plan.
 
 **Edit** with nonblank plan text replaces the complete set of timetable/rule pairs. Include all pairs you
 want to retain; omit a pair to remove it. No video files or published posts are deleted. Blank Edit leaves
-all pairs and progress unchanged (outro fields can still update the plan's outro choices). Edits validate
+all pairs and progress unchanged. Scheduled runs ignore the separate manual outro fields. Edits validate
 and save atomically, and invalidate older queued scheduled work.
 
 An unchanged ordered Custom list keeps its remaining progress even if moved to different days, reordered
@@ -75,10 +75,30 @@ uploads when none remain. Exact-list videos are reserved from other plan entries
 Outros are excluded from automatic rules and cannot be scheduled as standalone Custom items; deliberate
 manual `custom: "outro"` remains available.
 
+### Per-timetable outros
+
+Add an optional clause after the selection, for example:
+
+```text
+Mon 06:00: lifo; outro: "Outro A.mp4"
+Fri 21:00: random; outro: "Outro B.mp4"
+Sun 18:00: custom: "First.mp4", "Second.mp4"; outro: none
+```
+
+`outro:` sets all four main-video platforms for that entry. To choose separately per platform, use
+`; youtube outro: "YT end.mp4"; tiktok outro: none; instagram outro: "IG end.mp4"; facebook outro: none`
+instead. Quote filenames containing commas, semicolons or pipes. Each platform can be specified only once.
+Missing or ambiguous newly specified filenames reject the entire edit before saving.
+
+Omitting the clause keeps an existing entry's saved choices, including when its selection rule changes.
+A new timetable defaults to the clip named `outro`. Use `outro: none` to disable it explicitly. Editing
+outros never restarts an unchanged Custom list. The summary includes each entry's choices and a copyable
+plan. A saved clip missing at publishing time is reported and that platform publishes without it.
+
 ### Outro fields (`outro_youtube`, `outro_tiktok`, `outro_instagram`, `outro_facebook`)
 
 - Enter the exact filename of a clip in the Drive folder (as Drive shows it) to choose that platform's outro.
-- **With scheduled Edit** the choice is **saved for every timetable in the plan** and used for its posts until edited.
+- **For scheduled entries**, specify the outro inside each entry (examples below). The separate outro form fields are manual-only.
 - **With `manual_now`** the choice applies to **that one video only**; later posts go back to the saved outro.
 - **Empty = no change.** Type `none` to switch that platform's outro off.
 - **Default outro:** a platform with no saved choice uses the clip named exactly `outro` in the folder

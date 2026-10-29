@@ -28,13 +28,10 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
   let entries: PlanEntryInput[] | undefined;
   try { entries = request.entries === undefined ? undefined : validatePlanEntries(request.entries); }
   catch(e) { throw new HttpError(400, (e as Error).message); }
-  const overrides = request.outros ?? {};
-  for (const [platform, outro] of Object.entries(overrides)) {
-    if (!['youtube','tiktok','instagram','facebook'].includes(platform) || (outro !== null && (!outro || !/^[A-Za-z0-9_-]{10,200}$/.test(outro.fileId) || typeof outro.fileName !== 'string'))) throw new HttpError(400, 'Invalid outro');
-  }
-  if (entries === undefined && !Object.keys(overrides).length) return planView(db, nowMs);
+  if (request.outros && Object.keys(request.outros).length) throw new HttpError(400, 'Specify outros inside each timetable entry; universal scheduled outro changes are retired');
+  if (entries === undefined) return planView(db, nowMs);
   const at = new Date(nowMs).toISOString();
-  const planOutros = {...JSON.parse(meta.outros_json), ...overrides};
+  const planOutros = JSON.parse(meta.outros_json);
   const used = new Set<string>();
   const desired = (entries ?? old.map(j => ({scheduleText: j.scheduleText, policy: j.policy, custom: j.policy === 'custom' ? j.originalCustom : [], titleRule: j.titleRule}))).map((entry, index) => {
     const key = selectionKey(entry);
@@ -42,7 +39,8 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
     const prior = candidates.find(j => j.scheduleText === entry.scheduleText) ?? (candidates.length === 1 ? candidates[0] : undefined);
     if (prior) used.add(prior.id);
     const remaining = prior ? prior.remaining : entry.custom;
-    return { entry, prior, remaining, position: index, id: prior?.id ?? randomToken().slice(0,24), name: `Plan entry ${index+1}`, outros: {...planOutros, ...prior?.outros, ...overrides} };
+    const outroSource = prior ?? old.find(j => j.scheduleText === entry.scheduleText);
+    return { entry, prior, remaining, position: index, id: prior?.id ?? randomToken().slice(0,24), name: `Plan entry ${index+1}`, outros: {...outroSource?.outros, ...entry.outros} };
   });
   const protectedIds = new Set<string>();
   const saved = await db.prepare('SELECT outros_json FROM settings WHERE id=1').first<{outros_json: string | null}>();

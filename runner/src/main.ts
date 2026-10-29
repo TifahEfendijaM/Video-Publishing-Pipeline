@@ -210,7 +210,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   if (o.job?.remaining[0]) reservedIds.delete(o.job.remaining[0].fileId);
   const savedOutros: Record<string, { fileId: string; fileName: string } | null> = (await o.state.state()).settings.outros ?? {};
   const outros = Object.fromEntries(
-    (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(o.outroOverrides && p in o.outroOverrides ? o.outroOverrides[p] : savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
+    (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => [p, effectiveOutro(o.outroOverrides && p in o.outroOverrides ? o.outroOverrides[p] : o.job ? undefined : savedOutros[p], folder.videos, cfg.outros?.defaultFileName ?? "")]),
   );
   const excludeIds = new Set(Object.values(outros).flatMap((x) => (x ? [x.fileId] : [])));
   for (const outro of Object.values(savedOutros)) if (outro) excludeIds.add(outro.fileId);
@@ -508,9 +508,8 @@ async function cmdConfigure() {
   const saved = await state.plan();
   if (action === 'edit') {
     const interpreted = planText ? await interpretPlan(planText, model) : undefined;
-    const entries = interpreted ? resolvePlan(interpreted, interpreted.some(e => e.policy === 'custom') ? await (await drive()).listVideos() : [], saved.entries) : undefined;
-    const { changes: outros } = await applyOutros(false);
-    await state.changePlan({ action, entries, expectedRevision: saved.revision, outros });
+    const entries = interpreted ? resolvePlan(interpreted, interpreted.some(e => e.policy === 'custom' || Object.values(e.outroNames ?? {}).some(name => name !== null)) ? await (await drive()).listVideos() : [], saved.entries) : undefined;
+    await state.changePlan({ action, entries, expectedRevision: saved.revision });
     s.p(planText ? 'Updated the publishing plan. Nothing was published now. Unchanged Custom lists retain their progress.' : 'Plan text left blank: retained the saved timetable/rule pairs and Custom progress.');
   } else {
     await state.changePlan({ action: action as 'pause' | 'resume' });
@@ -518,6 +517,13 @@ async function cmdConfigure() {
   }
   await reportPlan(s, state);
   s.write();
+}
+
+function outroDescription(choices: Record<string, {fileName:string} | null> = {}) {
+  const quote = (name:string) => '"' + name.replace(/"/g,'""') + '"';
+  const entries = Object.entries(choices);
+  if (entries.length===4 && entries.every(([,v])=>v?.fileName===entries[0][1]?.fileName)) return `; outro: ${entries[0][1] ? quote(entries[0][1].fileName) : 'none'}`;
+  return entries.map(([platform,outro])=>`; ${platform} outro: ${outro ? quote(outro.fileName) : 'none'}`).join('');
 }
 
 function selectionDescription(entry: { policy: string; originalCustom?: {fileName:string}[]; titleRule?: TitleRule | null }) {
@@ -530,11 +536,10 @@ async function reportPlan(s: Summary, state: StateClient) {
   const plan = await state.plan();
   s.h(2, 'Publishing plan');
   s.p(plan.paused ? 'PAUSED — rules and remaining Custom lists are retained.' : 'Plan scheduling is enabled; only configured future slots can run.');
-  if (Object.keys(plan.outros).length) s.kv(Object.entries(plan.outros).map(([platform, outro]) => [`${platform} plan outro`, outro?.fileName ?? 'none']));
   if (!plan.entries.length) { s.p('No plan configured. Use Edit and enter paired timetables and selection rules.'); return; }
-  s.table(['Timetable (Europe/Sarajevo)', 'Selection', 'Status', 'Next occurrence'], plan.entries.map(j=>[j.scheduleText,selectionDescription(j),j.status,j.nextOccurrences[0]?.local ?? 'none']));
+  s.table(['Timetable (Europe/Sarajevo)', 'Selection', 'Outros', 'Status', 'Next occurrence'], plan.entries.map(j=>[j.scheduleText,selectionDescription(j),outroDescription(j.outros).replace(/^; /,'') || 'default (outro)',j.status,j.nextOccurrences[0]?.local ?? 'none']));
   s.p('Editable plan (replace the entire plan to remove a timetable; separate entries with newlines or |):');
-  s.code(plan.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}`).join(' | '));
+  s.code(plan.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}`).join(' | '));
   for (const entry of plan.entries) {
     if (entry.policy === 'custom' || entry.remaining.length) {
       s.h(3, entry.scheduleText);
@@ -635,7 +640,7 @@ async function cmdTools() {
   } else if (action === "plan_preview") {
     const interpreted = await interpretPlan(target, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
     s.p('Interpreted weekly plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving.');
-    s.table(['Timetable', 'Selection'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))})]));
+    s.table(['Timetable', 'Selection', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
   } else if (action === "rule_preview") {
     const interpreted = await interpretVideoRule(target, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
     s.p(`Interpreted rule: ${interpreted.explanation} Nothing was saved or published.`);

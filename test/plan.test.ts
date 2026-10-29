@@ -74,14 +74,20 @@ describe('one publishing plan',()=> {
     await expect(changePlan(db,{action:'edit',expectedRevision:p.revision,entries:[automatic()]},NOW)).rejects.toThrow(/no edits saved/);
     expect((await planView(db,NOW)).entries[0].remaining).toEqual([a,b]);
   });
-  it('saves plan-wide outros for future added timetables and rejects outro Custom entries',async()=> {
-    const db=makeDb();let p=await edit(db,[automatic()]);
-    const outro={fileId:'outro_asset_12345',fileName:'end.mp4'};
-    p=await changePlan(db,{action:'edit',expectedRevision:p.revision,outros:{youtube:outro}},NOW);
-    p=await edit(db,[automatic(),custom()]);
-    expect(p.entries.every(e=>e.outros.youtube?.fileId===outro.fileId)).toBe(true);
-    await expect(edit(db,[{...custom(),custom:[outro]}])).rejects.toThrow(/Outros/);
-    expect((await planView(db,NOW)).entries).toHaveLength(2);
+  it('saves separate outros and preserves them when omitted or when selection changes',async()=> {
+    const db=makeDb(); const outro={fileId:'outro_asset_12345',fileName:'end.mp4'};
+    let p=await edit(db,[{...automatic(),outros:{youtube:outro,tiktok:null}}, {...custom(),outros:{youtube:null}}]);
+    expect(p.entries[0].outros.youtube).toEqual(outro);
+    expect(p.entries[1].outros.youtube).toBeNull();
+    await advanceCustomJobs(db,a.fileId);
+    p=await edit(db,[{...automatic(),policy:'random'},custom()]);
+    expect(p.entries[0].outros).toEqual({youtube:outro,tiktok:null});
+    expect(p.entries[1].outros.youtube).toBeNull();
+    expect(p.entries[1].remaining).toEqual([b]);
+    p=await edit(db,[{...automatic(),policy:'random'},custom(),automatic('Mon 07:00')]);
+    expect(p.entries[2].outros).toEqual({}); // new timetable does not inherit another entry's choices
+    await expect(edit(db,[{...custom(),custom:[outro],outros:{youtube:outro}}])).rejects.toThrow(/Outros/);
+    await expect(changePlan(db,{action:'edit',expectedRevision:p.revision,outros:{youtube:outro}},NOW)).rejects.toThrow(/universal/);
   });
   it('pauses queued and in-flight work, retains Custom lists, and resumes only future slots',async()=> {
     const e=env();const db=e.DB as ReturnType<typeof makeDb>;
@@ -129,7 +135,7 @@ describe('one publishing plan',()=> {
     const headers={authorization:'Bearer state'};
     let p=await (await route(new Request('https://w/api/plan',{headers}),e)).json();
     expect(p.entries).toEqual([]);
-    const response=await route(new Request('https://w/api/plan/change',{method:'POST',headers,body:JSON.stringify({action:'edit',expectedRevision:p.revision,entries:[custom()]})}),e);
+    const response=await route(new Request('https://w/api/plan/change-with-outros',{method:'POST',headers,body:JSON.stringify({action:'edit',expectedRevision:p.revision,entries:[custom()]})}),e);
     p=await response.json();expect(p.entries[0].remaining).toEqual([a,b]);
     await expect(route(new Request('https://w/api/jobs/change',{method:'POST',headers,body:'{}'}),e)).rejects.toThrow(/retired/);
   });
@@ -167,5 +173,21 @@ describe('paired timetable and selection entry',()=> {
   it('parses the displayed literal title rule without asking AI to reinterpret it',async()=> {
     const noAI={model:'test',run:async()=>{throw new Error('AI must not run');}};
     expect(await interpretSelection('random video whose title ends with "[available]"',noAI)).toMatchObject({policy:'title_rule',titleRule:{match:'ends_with',text:'[available]',order:'random'}});
+  });
+});
+
+describe('per-timetable outro text',()=> {
+  it('resolves different clips, platform overrides and explicit none without altering Custom identity',async()=> {
+    const outro={fileId:'outro_asset_12345',fileName:'End; yes, please.mp4'};
+    const parsed=await interpretPlan('Fri 05:00: lifo; outro: "End; yes, please.mp4" | Sun 18:00: custom: "First.mp4", "Second.mp4"; youtube outro: none; facebook outro: "End; yes, please.mp4"',model);
+    const entries=resolvePlan(parsed,[video(a),video(b),video(outro)],[]);
+    expect(entries[0].outros).toEqual({youtube:outro,tiktok:outro,instagram:outro,facebook:outro});
+    expect(entries[1].outros).toEqual({youtube:null,facebook:outro});
+    expect(entries[1].custom).toEqual([a,b]);
+  });
+  it('rejects missing, ambiguous, duplicate and malformed outro choices before saving',async()=> {
+    const parsed=await interpretPlan('Mon 06:00: random; outro: "Missing.mp4"',model);
+    expect(()=>resolvePlan(parsed,[],[])).toThrow(/missing or ambiguous/);
+    for(const text of ['Mon 06:00: lifo; outro: "A.mp4", "B.mp4"','Mon 06:00: lifo; youtube outro: none; youtube outro: off','Mon 06:00: random; something: none']) await expect(interpretPlan(text,model)).rejects.toThrow();
   });
 });
