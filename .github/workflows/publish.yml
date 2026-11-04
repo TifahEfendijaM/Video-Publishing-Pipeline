@@ -18,7 +18,7 @@ on:
         required: true
         options: [edit, pause, resume]
       publishing_plan:
-        description: 'Scheduled Edit only. Pair times and rules, separated by | or newlines. Example: Mon and Wed 06:00: lifo | Fri 21:00: random | Sun 18:00: custom: "Video A.mp4", "Video B.mp4". All times Europe/Sarajevo.'
+        description: 'Scheduled Edit only. Pair weekly/every-N-days times and rules, separated by | or newlines. Example: every two days at 18:00: lifo | Mon and Wed 06:00: lifo | Fri 21:00: random | Sun 18:00: custom: "Video A.mp4", "Video B.mp4". All times Europe/Sarajevo.'
         type: string
         required: false
       video_selection:

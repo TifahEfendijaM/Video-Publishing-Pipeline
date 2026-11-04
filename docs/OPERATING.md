@@ -11,7 +11,7 @@ plan, which simply reports the saved plan without changing it.
 |---|---|
 | `run_mode` | `automated` edits/pauses/resumes the plan, never publishes immediately. `manual_now` publishes one video now. |
 | `plan_action` | `edit` replaces the complete plan when text is supplied; `pause` and `resume` retain its rules and Custom progress. |
-| `publishing_plan` | Pair every weekly timetable with its selection rule, separated by newlines or ` | `. Blank Edit retains the saved pairs and Custom progress. Ignored for Pause/Resume/manual. |
+| `publishing_plan` | Pair every timetable with its selection rule, separated by newlines or ` | `. Blank Edit retains the saved pairs and Custom progress. Ignored for Pause/Resume/manual. |
 | `video_selection` | Manual only: one combined video/outro entry, such as `lifo; outro: "End.mp4"` or `custom: "Video.mp4"; outro: none`. Blank uses saved defaults. |
 | `manual_schedule_action` | Manual only: `keep_schedule` (default) leaves the plan untouched; `pause_schedule` pauses it before the one-off upload. |
 
@@ -26,10 +26,10 @@ Sunday at 18:00: publish this list in order: "Video A.mp4", "Video B.mp4"
 ```
 
 The timetable comes first, followed by a colon and space, then its rule. `=>` can also separate them.
-Use **weekly weekdays and times**, in Europe/Sarajevo time, rather than calendar dates or relative dates.
+Use **weekly weekdays and times**, or **every N days at a time**, in Europe/Sarajevo time. A start date is optional for day intervals; one-off calendar dates and arbitrary relative-date instructions are unsupported.
 The parser pairs each timetable with its rule before interpreting it; rules never depend on a matching
 position in a separate field. Overlapping occurrences (two rules for the same weekday/time) are rejected.
-There can be at most 20 entries and 50 weekly occurrences. Title-rule interpretation uses the existing
+There can be at most 20 entries and 50 timetable slots. Title-rule interpretation uses the existing
 Workers AI connection at Edit time; scheduled runs use the saved interpretation without calling AI again.
 Simple FIFO/LIFO/Random and exact lists are interpreted directly.
 
@@ -49,6 +49,37 @@ video-content understanding or external actions are executed. **Tools → plan_p
 entered in `target`, without saving it or publishing; Custom filename existence is validated when saving.
 The summary after Edit shows the saved interpretation, next times, a copyable plan and every remaining
 Custom filename in order. **Tools → status** shows the same saved plan.
+
+### Every N days
+
+Examples (each belongs in the complete publishing plan):
+
+```text
+every two days at 18:00: lifo; outro: none
+every 3 days at 07:30 starting 2026-11-06: random; outro: "End.mp4"
+daily at noon: fifo
+```
+
+Numeric intervals from 1–365 days are supported, as are written numbers one through twelve, `daily`,
+`every day` and `every other day`. Use exactly one clock time per interval entry. Short forms and 12-hour
+times such as `every two days at 6pm` are accepted. These are deterministic schedule forms, separate from
+AI interpretation of video-title filters.
+
+A new interval without a start date is anchored to the Sarajevo calendar date on which you save it.
+If today's time is already past, it starts at the next matching date. The summary/copyable plan includes
+`starting YYYY-MM-DD` and upcoming dates. Re-entering the same interval and time without a date retains
+its saved anchor. If several phases exist for that interval/time, specify the start date explicitly.
+The start date can be past or future. It defines the cycle; missed occurrences are never backfilled.
+
+For example, `every 2 days at 18:00 starting 2026-11-06` means November 6, 8, 10, 12, and so on at
+18:00 Sarajevo time. It does not restart each week or drift with upload completion. Daylight-saving
+changes preserve the local clock time, so elapsed hours between runs may differ from exactly 48.
+Pause/Resume retains the anchor and continues on the next future matching date.
+
+Interval entries can share a plan with weekly entries and use the same selection, Custom-list and outro
+options. Timetables that eventually collide at the same local clock time are rejected before saving.
+For example, every two days at 18:00 will eventually coincide with Friday at 18:00; give them different
+times. Monthly, hourly and arbitrary conversational recurrence rules are not supported.
 
 ### Edit, Pause and Resume
 
@@ -129,7 +160,7 @@ later with Scheduled → Resume. One-off uploads work while the scheduled plan i
 
 ## Schedule syntax
 
-Weekly recurring, Europe/Sarajevo time (summer/winter time handled automatically).
+Weekly or every-N-days recurring, Europe/Sarajevo time (summer/winter time handled automatically).
 
 - Practical: `tuesday-5pm monday-6am friday 9-pm` → `Mon 06:00; Tue 17:00; Fri 21:00`
 - Recommended format: `Mon 06:00; Wed 17:00; Fri 21:00` (24-hour clock).

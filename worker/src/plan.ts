@@ -2,7 +2,7 @@ import { HttpError, randomToken, type Db, type Outros } from './logic';
 import { listJobs } from './jobs';
 import { planState, setPlanPaused } from './plan-state';
 import { selectionKey, validatePlanEntries, type PlanEntryInput } from '../../src/shared/publishing-plan';
-import { parseSchedule } from '../../src/shared/schedule';
+import { parseTimetable, formatTimetable, anchorTimetable } from '../../src/shared/timetable';
 
 export interface PlanChange {
   action: 'edit' | 'pause' | 'resume';
@@ -26,7 +26,11 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
   const old = await listJobs(db, nowMs), meta = await planState(db);
   if (request.expectedRevision !== meta.revision) throw new HttpError(409, 'The plan or Custom progress changed; read it again before editing');
   let entries: PlanEntryInput[] | undefined;
-  try { entries = request.entries === undefined ? undefined : validatePlanEntries(request.entries); }
+  try { entries = request.entries === undefined ? undefined : validatePlanEntries(request.entries.map(entry=>{
+    const schedule=parseTimetable(entry.scheduleText);
+    if(!schedule) throw new Error('Each entry needs a timetable');
+    return {...entry,scheduleText:formatTimetable(anchorTimetable(schedule,nowMs,old.map(j=>j.schedule)))};
+  })); }
   catch(e) { throw new HttpError(400, (e as Error).message); }
   if (request.outros && Object.keys(request.outros).length) throw new HttpError(400, 'Specify outros inside each timetable entry; universal scheduled outro changes are retired');
   if (entries === undefined) return planView(db, nowMs);
@@ -62,7 +66,7 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
   ];
   const rows = JSON.stringify(desired.map(d=>({
     id:d.id, name:d.prior?.name ?? d.name, nameKey:d.prior ? d.prior.name.toLowerCase() : d.id,
-    schedule:JSON.stringify(parseSchedule(d.entry.scheduleText)), policy:d.entry.policy,
+    schedule:JSON.stringify(parseTimetable(d.entry.scheduleText)), policy:d.entry.policy,
     remaining:JSON.stringify(d.remaining), rule:d.entry.titleRule ? JSON.stringify(d.entry.titleRule) : null,
     outros:JSON.stringify(d.outros), status:d.entry.policy==='custom' && !d.remaining.length ? 'completed' : 'active',
     version:(d.prior?.version ?? 0)+1, original:d.entry.policy==='custom' ? JSON.stringify(d.entry.custom) : null, position:d.position,
