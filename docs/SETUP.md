@@ -155,3 +155,11 @@ The new form requires the updated Worker and migration before Edit/Pause/Resume 
 plan with Tools → status or a blank Scheduled → Edit, run Tools → verify and dispatch_test, and optionally
 plan_preview; then restore the previous publishing kill switch. No live video is needed as an activation
 test. The global publishing switch and the plan's Pause/Resume control are independent.
+
+## Updating day-interval scheduling
+
+Disable live publishing while merging and deploying the updated Worker/runner. No new D1 migration is
+needed: weekly schedule JSON remains compatible, while new every-N-days entries save an anchored
+recurrence object. The new plan-edit API route fails closed until the Worker supports that object.
+Verify the plan read-back and scheduler dispatch before restoring the previous publishing switch.
+Do not create an example publishing plan as an activation test.

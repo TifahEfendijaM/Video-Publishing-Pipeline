@@ -1,5 +1,5 @@
 import type { CustomVideo, JobPolicy, TitleRule } from './job-selection';
-import { formatSchedule, parseSchedule } from './schedule';
+import { parseTimetable, formatTimetable, timetablesOverlap, type Timetable } from './timetable';
 export type EntryOutros = Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook', CustomVideo | null>>;
 
 export interface PlanEntryInput {
@@ -17,17 +17,19 @@ export function selectionKey(entry: { policy: JobPolicy; custom: CustomVideo[]; 
 
 export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
   if (!Array.isArray(input) || !input.length || input.length > 20) throw new Error('Enter 1–20 timetable/rule entries');
-  const slots = new Set<string>(), customIds = new Set<string>();
+  const schedules: Timetable[] = [], customIds = new Set<string>();
+  let slotCount=0;
   return input.map(entry => {
     if (!entry || typeof entry.scheduleText !== 'string') throw new Error('Each entry needs a weekly timetable');
-    const schedule = parseSchedule(entry.scheduleText);
-    if (!schedule?.length) throw new Error('Each entry needs a weekly timetable');
-    for (const s of schedule) {
-      const key = `${s.day}:${s.minute}`;
-      if (slots.has(key)) throw new Error('Two rules use the same weekday and time; give each occurrence one selection rule');
-      slots.add(key);
+    const schedule = parseTimetable(entry.scheduleText);
+    if (!schedule) throw new Error('Each entry needs a timetable');
+    // A missing interval anchor may belong to a saved phase. Only the Worker can resolve it.
+    if(Array.isArray(schedule)||schedule.startDate) {
+      if(schedules.some(s=>timetablesOverlap(s,schedule))) throw new Error('Two rules use the same weekday and time or overlapping recurrence; give each occurrence one selection rule');
+      schedules.push(schedule);
     }
-    if (slots.size > 50) throw new Error('The plan supports at most 50 weekly occurrences');
+    slotCount+=Array.isArray(schedule)?schedule.length:1;
+    if(slotCount>50) throw new Error('The plan supports at most 50 timetable slots');
     if (!['fifo', 'lifo', 'random', 'custom', 'title_rule'].includes(entry.policy)) throw new Error('Invalid selection rule');
     if (!Array.isArray(entry.custom) || entry.custom.length > 500) throw new Error('Invalid Custom list');
     if (entry.policy === 'custom' && !entry.custom.length) throw new Error('A Custom list needs at least one filename');
@@ -47,6 +49,6 @@ export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
         if (!['youtube','tiktok','instagram','facebook'].includes(platform) || (outro !== null && (!outro || !/^[A-Za-z0-9_-]{10,200}$/.test(outro.fileId) || typeof outro.fileName !== 'string' || !outro.fileName.trim() || outro.fileName.length > 300))) throw new Error('Invalid outro choice');
       }
     }
-    return { ...entry, scheduleText: formatSchedule(schedule) };
+    return { ...entry, scheduleText: formatTimetable(schedule) };
   });
 }

@@ -12,7 +12,7 @@ stay protected from duplicates, and outro assets remain in place. The old consum
 is removed. [Archive access and migration setup](docs/SETUP.md#drive-access-for-automatic-archival).
 
 Scheduled mode provides **Edit / Pause / Resume** for one plan. Pair each timetable with its rule in
-one text field, for example `Mon and Wed 06:00: lifo | Fri 21:00: random`. Ordered Custom lists and
+one text field, for example `Mon and Wed 06:00: lifo | every two days at 18:00: random`. Day intervals keep a saved start-date anchor and Sarajevo wall-clock time across daylight-saving changes. Ordered Custom lists and
 plain-English title filters work in the same field. The summary shows each rule and every remaining
 Custom filename. Unchanged lists retain progress across edits; Pause/Resume retain the full plan.
 Each timetable can choose its own outro, e.g. `Mon 06:00: lifo; outro: "End.mp4"`; omit it to retain an existing choice or use the default `outro` clip for a new entry. Use `outro: none` to disable it. Manual uploads use one combined entry, e.g. `custom: "Video.mp4"; outro: "End.mp4"`, and default to **Keep schedule**, with an optional **Pause schedule** choice.

@@ -3,7 +3,7 @@ import type { CaptionModel } from './captioner';
 import { parseCustomList, resolveCustomList, type CustomVideo, type TitleRule, type JobPolicy } from '../../src/shared/job-selection';
 import { resolveCustomName } from '../../src/shared/selection';
 import { validatePlanEntries, type PlanEntryInput } from '../../src/shared/publishing-plan';
-import { parseSchedule, formatSchedule } from '../../src/shared/schedule';
+import { parseTimetable, formatTimetable } from '../../src/shared/timetable';
 import type { FolderVideo } from '../../src/shared/selection';
 
 export interface SelectionEntry { policy: JobPolicy; titleRule: TitleRule | null; filenames: string[]; outroNames?: Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook',string|null>> }
@@ -32,11 +32,11 @@ export async function interpretPlan(text: string, model: CaptionModel) {
   for (const line of lines) {
     const delimiter = /:\s+|\s*=>\s*/.exec(line);
     if (!delimiter) throw new Error('Pair each timetable with a rule: Monday at 06:00: newest video first');
-    const slots = parseSchedule(line.slice(0,delimiter.index));
-    if (!slots) throw new Error('Each rule needs a weekly timetable');
+    const slots = parseTimetable(line.slice(0,delimiter.index));
+    if (!slots) throw new Error('Each rule needs a timetable');
     const {rule,outroNames} = parseOutroClauses(line.slice(delimiter.index+delimiter[0].length));
     const selection = await interpretSelection(rule,model);
-    entries.push({...selection,scheduleText:formatSchedule(slots), ...(Object.keys(outroNames).length ? {outroNames} : {})});
+    entries.push({...selection,scheduleText:formatTimetable(slots), ...(Object.keys(outroNames).length ? {outroNames} : {})});
   }
   // Validate schedules/overlaps before any Drive reads or saved changes.
   validatePlanEntries(entries.map((entry,index)=>({...entry,custom:entry.filenames.map((fileName,i)=>({fileId:`preview_${index}_${String(i).padStart(5,'0')}`,fileName}))})));

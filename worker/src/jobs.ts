@@ -1,10 +1,11 @@
 import { dispatchWorkflow, HttpError, randomToken, sha256Hex, timingSafeEqual, type Db, type Env, type FetchFn, type Outros } from "./logic";
-import { dueOccurrence, nextOccurrences, parseSchedule, formatSchedule, type Slot } from "../../src/shared/schedule";
+import { parseSchedule, type Slot } from "../../src/shared/schedule";
+import { dueTimetable, nextTimetable, formatTimetable, type Timetable } from '../../src/shared/timetable';
 import type { CustomVideo, JobPolicy, TitleRule } from "../../src/shared/job-selection";
 import { planState } from './plan-state';
 
 export interface ScheduledJob {
-  id: string; name: string; schedule: Slot[]; scheduleText: string; policy: JobPolicy;
+  id: string; name: string; schedule: Timetable; scheduleText: string; policy: JobPolicy;
   remaining: CustomVideo[]; titleRule: TitleRule | null; outros: Outros;
   status: "active" | "completed" | "stopped"; version: number; enabledAt: string;
   originalCustom: CustomVideo[];
@@ -12,7 +13,7 @@ export interface ScheduledJob {
 const iso = (n: number) => new Date(n).toISOString();
 function read(r: any): ScheduledJob {
   const schedule = JSON.parse(r.schedule_json);
-  return { id: r.id, name: r.name, schedule, scheduleText: formatSchedule(schedule), policy: r.policy,
+  return { id: r.id, name: r.name, schedule, scheduleText: formatTimetable(schedule), policy: r.policy,
     remaining: JSON.parse(r.remaining_json), titleRule: r.title_rule_json ? JSON.parse(r.title_rule_json) : null,
     outros: JSON.parse(r.outros_json), status: r.status, version: r.version, enabledAt: r.enabled_at,
     originalCustom: JSON.parse(r.custom_original_json ?? (r.policy === 'custom' ? r.remaining_json : '[]')) };
@@ -26,7 +27,7 @@ export async function listJobs(db: Db, nowMs: number) {
   const rows = (await db.prepare("SELECT * FROM scheduled_jobs ORDER BY plan_position, created_at, id").all()).results;
   return rows.map((r) => {
     const job = read(r);
-    return { ...job, nextOccurrences: !paused && job.status === "active" ? nextOccurrences(job.schedule, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel })) : [] };
+    return { ...job, nextOccurrences: !paused && job.status === "active" ? nextTimetable(job.schedule, nowMs, 5).map((o) => ({ key: o.key, local: o.localLabel })) : [] };
   });
 }
 export interface JobChange {
@@ -51,7 +52,7 @@ export async function changeJob(db: Db, req: JobChange, nowMs: number) {
     ]);
     return { deleted: old!.name };
   }
-  let schedule: Slot[] | null;
+  let schedule: Timetable | null;
   try { schedule = parseSchedule(req.scheduleText ?? null); } catch (e) { throw new HttpError(400, (e as Error).message); }
   schedule ??= old?.schedule ?? null;
   if (!schedule) throw new HttpError(400, "Create requires a schedule; blank only keeps an existing job's times");
@@ -115,7 +116,7 @@ export async function dispatchJobs(env: Env, nowMs: number, fetchFn: FetchFn) {
   const jobs = (await listJobs(db, nowMs)).filter((j) => j.status === "active");
   const claims: { key: string; version: number; jobId: string }[] = [];
   for (const job of jobs) {
-    const occurrence = dueOccurrence(job.schedule, nowMs);
+    const occurrence = dueTimetable(job.schedule, nowMs);
     if (!occurrence || occurrence.utcMs <= Date.parse(job.enabledAt)) continue;
     claims.push({ key: `${job.id}|${occurrence.key}`, version: job.version, jobId: job.id });
   }
