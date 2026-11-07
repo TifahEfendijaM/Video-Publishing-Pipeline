@@ -90,7 +90,7 @@ describe("Drive archive moves", () => {
 describe('private user-owned preparation inbox',()=>{
   afterEach(()=>vi.unstubAllGlobals());
   const id='bce95549-8669-4097-95d1-a295bbcbeb25';
-  const metadata={id:'inbox',name:'easybosnian-ai-request-inbox.json',mimeType:'application/json',parents:['input'],trashed:false};
+  const metadata={id:'inbox',name:'easybosnian-ai-request-inbox.txt',mimeType:'text/plain',parents:['input'],trashed:false};
   it('updates an existing owned file instead of creating a quota-consuming service-account file',async()=>{
     let inbox:any={schemaVersion:1};
     const fetch=vi.fn(async(url:string,init:RequestInit)=>{
