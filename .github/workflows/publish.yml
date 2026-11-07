@@ -36,9 +36,32 @@ permissions:
   contents: read
 
 jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      requires_cloud: ${{ steps.inspect.outputs.requires_cloud }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: inspect
+        run: npx tsx runner/src/main.ts inspect-input
+        env:
+          RUN_MODE: ${{ inputs.run_mode }}
+          PLAN_ACTION: ${{ inputs.plan_action }}
+          PUBLISHING_PLAN: ${{ inputs.publishing_plan }}
+          VIDEO_SELECTION: ${{ inputs.video_selection }}
   prepare:
+    needs: inspect
     runs-on: ubuntu-24.04
     timeout-minutes: 75
+    concurrency:
+      group: ${{ needs.inspect.outputs.requires_cloud == 'true' && 'easybosnian-ai-preparation' || format('instant-input-{0}', github.run_id) }}
+      cancel-in-progress: false
     outputs:
       publishing_plan: ${{ steps.prepare.outputs.publishing_plan }}
       video_selection: ${{ steps.prepare.outputs.video_selection }}

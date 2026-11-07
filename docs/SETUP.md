@@ -15,8 +15,11 @@ Create/keep the hourly cloud task described in [CHATGPT_TASK.md](CHATGPT_TASK.md
 settings explicitly say **Runs on Cloud**. A desktop/local task is unsuitable. Subscription task/tool
 availability and usage limits still apply. The task must be able to read this repository and the source
 folder and edit only the result Doc. Keep all source filenames, requests and generated copy in Drive.
-GitHub creates private short-lived JSON request files; the cloud task only reads them and writes the
-result Doc. Completed/expired requests are moved to Drive Trash by their originating preparation job.
+`captions.requestInboxFileId` points to a pre-created, user-owned JSON inbox in the source folder.
+GitHub updates that file instead of creating service-account-owned files (service accounts have no
+storage quota). Natural preparation jobs are serialized; formatted uploads bypass that queue.
+The cloud task reads the inbox and writes the result Doc. The originating job clears only its own
+matching request afterward; stale responses cannot apply to another request.
 
 Run a nonpublishing **Tools → plan_preview** with a natural request to test the complete handoff.
 Run **Tools → verify** to check the preparation Doc is accessible to the pipeline identity. Deploy

@@ -34,7 +34,7 @@ describe('subscription-based cloud preparation',()=>{
    await expect(validateNormalized('plan','Do something unrelated')).rejects.toThrow();
  });
  it('keeps formatted entries instant without touching a connector or AI',async()=>{
-   const d={preparationText:vi.fn(),createPreparationRequest:vi.fn(),trashPreparationRequest:vi.fn()};
+   const d={preparationText:vi.fn(),createPreparationRequest:vi.fn(),clearPreparationRequest:vi.fn()};
    const text='Once on 2026-11-07 at 21:00: custom: "Coffee.mp4"; outro: none | every 3 days at 18:00 starting 2026-11-08: lifo; outro: "Ending.mp4"';
    expect(await flexibleInterpretation('plan',text,d,'doc')).toBe(text);
    expect(d.preparationText).not.toHaveBeenCalled();
@@ -42,17 +42,17 @@ describe('subscription-based cloud preparation',()=>{
  it('waits for a matching private result, validates it, then cleans up only its request',async()=>{
    let payload:ReturnType<typeof requestPayload>|undefined,reads=0;
    const normalized='Every 3 days at 18:00 starting 2026-11-08: lifo; outro: none';
-   const d={preparationText:vi.fn(async()=>JSON.stringify(reads++<2?empty():{...empty(),responses:[{requestId:payload!.id,digest:payload!.digest,status:'ready',normalized,explanation:'Every third day from tomorrow.'}]})),createPreparationRequest:vi.fn(async(_id:string,p:unknown)=>{payload=p as typeof payload;return 'private_request_file';}),trashPreparationRequest:vi.fn(async()=>{})};
+   const d={preparationText:vi.fn(async()=>JSON.stringify(reads++<2?empty():{...empty(),responses:[{requestId:payload!.id,digest:payload!.digest,status:'ready',normalized,explanation:'Every third day from tomorrow.'}]})),createPreparationRequest:vi.fn(async(_id:string,p:unknown)=>{payload=p as typeof payload;return 'private_request_file';}),clearPreparationRequest:vi.fn(async()=>{})};
    const sleep=vi.fn(async()=>{});
    expect(await flexibleInterpretation('plan','Every third day from tomorrow at six pm, newest first without an outro',d,'doc',{now:()=>NOW,sleep})).toBe(normalized);
    expect(sleep).toHaveBeenCalledTimes(1);
-   expect(d.trashPreparationRequest).toHaveBeenCalledWith('private_request_file',payload!.id);
+   expect(d.clearPreparationRequest).toHaveBeenCalledWith('private_request_file',payload!.id);
  });
  it('does not accept invalid AI interpretations and cleans up on rejection',async()=>{
    let payload:ReturnType<typeof requestPayload>|undefined;
-   const d={preparationText:vi.fn(async()=>JSON.stringify(payload?{...empty(),responses:[{requestId:payload.id,digest:payload.digest,status:'ready',normalized:'Tomorrow at 9: choose something',explanation:'Invalid example.'}]}:empty())),createPreparationRequest:vi.fn(async(_id:string,p:unknown)=>{payload=p as typeof payload;return 'request';}),trashPreparationRequest:vi.fn(async()=>{})};
+   const d={preparationText:vi.fn(async()=>JSON.stringify(payload?{...empty(),responses:[{requestId:payload.id,digest:payload.digest,status:'ready',normalized:'Tomorrow at 9: choose something',explanation:'Invalid example.'}]}:empty())),createPreparationRequest:vi.fn(async(_id:string,p:unknown)=>{payload=p as typeof payload;return 'request';}),clearPreparationRequest:vi.fn(async()=>{})};
    await expect(flexibleInterpretation('plan','Tomorrow at nine upload the newest video',d,'doc',{now:()=>NOW})).rejects.toThrow();
-   expect(d.trashPreparationRequest).toHaveBeenCalledOnce();
+   expect(d.clearPreparationRequest).toHaveBeenCalledOnce();
  });
 });
 

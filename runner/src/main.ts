@@ -2,7 +2,7 @@ import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
 import { interpretVideoRule } from "./video-rule";
 import { interpretPlan, interpretManualEntry, resolveManualEntry, resolvePlan } from "./publishing-plan";
-import { flexibleInterpretation, noModel, parsePreparation, preparedCaptionModel, writeWorkflowOutput, type InterpretationKind, type Preparation } from './cloud-preparation';
+import { flexibleInterpretation, noModel, parsePreparation, preparedCaptionModel, writeWorkflowOutput, validateNormalized, type InterpretationKind, type Preparation } from './cloud-preparation';
 // GitHub Actions runner entry point.
 //   configure  — "Publish video" form (run_mode manual_now | automated)
 //   scheduled  — dispatched by the Cloudflare Worker (or dispatch test)
@@ -64,11 +64,21 @@ function preparationDrive() {
   return {
     preparationText:async(id:string)=>(await current()).preparationText(id),
     createPreparationRequest:async(id:string,payload:unknown)=>(await current()).createPreparationRequest(id,payload),
-    trashPreparationRequest:async(fileId:string,id:string)=>(await current()).trashPreparationRequest(fileId,id),
+    clearPreparationRequest:async(fileId:string,id:string)=>(await current()).clearPreparationRequest(fileId,id),
   };
 }
 
 /** Wait outside the publishing concurrency group, so preparation cannot delay due uploads. */
+async function cmdInspectInput() {
+  const kind=env('RUN_MODE')==='manual_now' ? 'manual' : (env('PLAN_ACTION')||'edit')==='edit' && env('PUBLISHING_PLAN') ? 'plan' : null;
+  const text=kind==='manual' ? env('VIDEO_SELECTION') : env('PUBLISHING_PLAN');
+  let requiresCloud=false;
+  if(cfg.captions.provider==='chatgpt_task' && kind && text) {
+    try {await validateNormalized(kind,text);} catch {requiresCloud=true;}
+  }
+  writeWorkflowOutput(env('GITHUB_OUTPUT'),'requires_cloud',String(requiresCloud));
+}
+
 async function cmdPrepareInput() {
   const s=new Summary();
   s.h(1,'Prepare publishing input');
@@ -112,11 +122,11 @@ async function drive(): Promise<Drive> {
     if (!clientId || !clientSecret || !refreshToken) throw new Error("Set all three GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_REFRESH_TOKEN secrets");
     const t = await oauthAccessToken({ clientId, clientSecret, refreshToken, encryptionKey: sec("CREDENTIALS_ENCRYPTION_KEY"), state: stateClient(), credentialName: "drive_refresh_token" });
     if (!t.scopes.includes(DRIVE_SCOPES[0])) throw new Error("Drive owner OAuth token needs the https://www.googleapis.com/auth/drive scope for source archival");
-    return new Drive(t.accessToken, cfg.driveFolderId, archiveOptions());
+    return new Drive(t.accessToken, cfg.driveFolderId, archiveOptions(),cfg.captions.requestInboxFileId);
   }
   const sa = sec("GOOGLE_SERVICE_ACCOUNT_JSON");
   if (!sa) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON secret is not configured");
-  return new Drive(await serviceAccountToken(sa, DRIVE_SCOPES), cfg.driveFolderId, archiveOptions());
+  return new Drive(await serviceAccountToken(sa, DRIVE_SCOPES), cfg.driveFolderId, archiveOptions(),cfg.captions.requestInboxFileId);
 }
 
 function queueDeps(d: Drive, state: StateClient) {
@@ -850,7 +860,7 @@ async function reconcile(s: Summary, state: StateClient) {
 }
 
 const cmd = process.argv[2];
-const handlers: Record<string, () => Promise<void>> = { 'prepare-input':cmdPrepareInput, configure: cmdConfigure, scheduled: cmdScheduled, tools: cmdTools };
+const handlers: Record<string, () => Promise<void>> = { 'inspect-input':cmdInspectInput, 'prepare-input':cmdPrepareInput, configure: cmdConfigure, scheduled: cmdScheduled, tools: cmdTools };
 if (!handlers[cmd]) {
   console.error("usage: main.ts prepare-input|configure|scheduled|tools");
   process.exit(2);

@@ -86,3 +86,41 @@ describe("Drive archive moves", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('private user-owned preparation inbox',()=>{
+  afterEach(()=>vi.unstubAllGlobals());
+  const id='bce95549-8669-4097-95d1-a295bbcbeb25';
+  const metadata={id:'inbox',name:'easybosnian-ai-request-inbox.json',mimeType:'application/json',parents:['input'],trashed:false};
+  it('updates an existing owned file instead of creating a quota-consuming service-account file',async()=>{
+    let inbox:any={schemaVersion:1};
+    const fetch=vi.fn(async(url:string,init:RequestInit)=>{
+      if(init.method==='PATCH') {inbox=JSON.parse(String(init.body));return Response.json({id:'inbox'});}
+      return Response.json(new URL(url).searchParams.get('alt')==='media'?inbox:metadata);
+    });
+    vi.stubGlobal('fetch',fetch);
+    const d=new Drive('token','input',{},'inbox');
+    const payload={schemaVersion:1,id,expiresAt:new Date(Date.now()+60000).toISOString()};
+    expect(await d.createPreparationRequest(id,payload)).toBe('inbox');
+    expect(inbox).toEqual(payload);
+    await d.clearPreparationRequest('inbox',id);
+    expect(inbox).toEqual({schemaVersion:1});
+    expect(fetch.mock.calls.some(([,i])=>i.method==='POST'||i.method==='DELETE')).toBe(false);
+    expect(fetch.mock.calls.filter(([,i])=>i.method==='PATCH')).toHaveLength(2);
+  });
+  it('protects a pending request and never clears another request or unrelated file',async()=>{
+    const inbox={schemaVersion:1,id:'another-request',expiresAt:new Date(Date.now()+60000).toISOString()};
+    const fetch=vi.fn(async(url:string)=>Response.json(new URL(url).searchParams.get('alt')==='media'?inbox:metadata));
+    vi.stubGlobal('fetch',fetch);
+    const d=new Drive('token','input',{},'inbox');
+    await expect(d.createPreparationRequest(id,{})).rejects.toThrow(/pending/);
+    await d.clearPreparationRequest('inbox',id);
+    await expect(d.clearPreparationRequest('video',id)).rejects.toThrow(/unrelated/);
+    expect(fetch.mock.calls).toHaveLength(4);
+  });
+  it('refuses an inbox outside the source folder before updating it',async()=>{
+    const fetch=vi.fn(async()=>Response.json({...metadata,parents:['elsewhere']}));
+    vi.stubGlobal('fetch',fetch);
+    await expect(new Drive('token','input',{},'inbox').createPreparationRequest(id,{})).rejects.toThrow(/source folder/);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+});

@@ -102,7 +102,7 @@ export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"];
 
 export class Drive {
   private archiveFolderId?: string;
-  constructor(private token: string, private folderId: string, private archiveOptions: { folderId?: string; folderName?: string } = {}) {}
+  constructor(private token: string, private folderId: string, private archiveOptions: { folderId?: string; folderName?: string } = {}, private requestInboxId?:string) {}
 
   private async metadata(fileId: string): Promise<any> {
     return json(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed,parents,capabilities(canAddChildren,canMoveItemWithinDrive)&supportsAllDrives=true`, { label: "drive archive metadata", headers: this.h() });
@@ -161,17 +161,29 @@ export class Drive {
 
   async createPreparationRequest(id: string, payload: unknown): Promise<string> {
     if(!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid preparation request ID');
-    const boundary='easybosnian_'+randomBytes(16).toString('hex');
-    const metadata={name:`easybosnian-ai-request-${id}.json`,mimeType:'application/json',parents:[this.folderId]};
-    const body=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(payload)}\r\n--${boundary}--\r\n`;
-    const file=await json<{id:string}>('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true',{label:'Drive create private interpretation request',method:'POST',headers:{...this.h(),'content-type':`multipart/related; boundary=${boundary}`},body});
-    return file.id;
+    const existing=await this.requestInbox();
+    if(existing.id && (!Number.isFinite(Date.parse(existing.expiresAt)) || Date.parse(existing.expiresAt)>Date.now())) throw new Error('Another natural-language request is pending in the private inbox; wait for it to finish or expire');
+    await this.writeRequestInbox(payload);
+    return this.requestInboxId!;
   }
 
-  async trashPreparationRequest(fileId:string,id:string):Promise<void> {
-    const meta=await this.metadata(fileId);
-    if(meta.name!==`easybosnian-ai-request-${id}.json` || meta.mimeType!=='application/json' || !meta.parents?.includes(this.folderId)) throw new Error('Refusing to clean up a file that is not this preparation request');
-    await json(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`,{label:'Drive clean up interpretation request',method:'PATCH',headers:{...this.h(),'content-type':'application/json'},body:JSON.stringify({trashed:true})});
+  async clearPreparationRequest(fileId:string,id:string):Promise<void> {
+    if(fileId!==this.requestInboxId) throw new Error('Refusing to clear an unrelated file');
+    const existing=await this.requestInbox();
+    if(existing.id===id) await this.writeRequestInbox({schemaVersion:1});
+  }
+
+  private async requestInbox():Promise<any> {
+    if(!this.requestInboxId) throw new Error('ChatGPT request inbox is not configured');
+    const meta=await this.metadata(this.requestInboxId);
+    if(meta.trashed || meta.name!=='easybosnian-ai-request-inbox.json' || meta.mimeType!=='application/json' || !meta.parents?.includes(this.folderId)) throw new Error('ChatGPT request inbox must be the configured JSON file directly in the source folder');
+    const res=await request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(this.requestInboxId)}?alt=media&supportsAllDrives=true`,{label:'Drive private request inbox',headers:this.h(),timeoutMs:30000});
+    if(!res.ok) throw new HttpStatusError(res.status,'Could not read the request inbox','Drive private request inbox');
+    return JSON.parse((await res.text()).replace(/^\uFEFF/,''));
+  }
+
+  private async writeRequestInbox(payload:unknown):Promise<void> {
+    await json(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(this.requestInboxId!)}?uploadType=media&fields=id&supportsAllDrives=true`,{label:'Drive update user-owned request inbox',method:'PATCH',headers:{...this.h(),'content-type':'application/json'},body:JSON.stringify(payload)});
   }
 
   /** Lists videos directly in the folder. Throws on any auth/network error — never returns an empty list on failure. */

@@ -50,7 +50,7 @@ export function matchingResponse(prepared:Preparation,payload:ReturnType<typeof 
 export interface PreparationDrive {
   preparationText(documentId:string):Promise<string>;
   createPreparationRequest(id:string,payload:unknown):Promise<string>;
-  trashPreparationRequest(fileId:string,id:string):Promise<void>;
+  clearPreparationRequest(fileId:string,id:string):Promise<void>;
 }
 
 /** Strict entries remain instant. Natural text goes through the subscription's hourly cloud task. */
@@ -71,7 +71,7 @@ export async function flexibleInterpretation(kind:InterpretationKind,text:string
     }
   } finally {
     // Cleanup failure must never discard an otherwise valid interpretation; expired IDs cannot act later.
-    await drive.trashPreparationRequest(fileId,payload.id).catch(()=>{});
+    await drive.clearPreparationRequest(fileId,payload.id).catch(()=>{});
   }
 }
 
