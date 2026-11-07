@@ -54,6 +54,14 @@ describe('subscription-based cloud preparation',()=>{
    await expect(flexibleInterpretation('plan','Tomorrow at nine upload the newest video',d,'doc',{now:()=>NOW})).rejects.toThrow();
    expect(d.clearPreparationRequest).toHaveBeenCalledOnce();
  });
+ it('waits through a partial document rewrite without accepting malformed data',async()=>{
+   let payload:ReturnType<typeof requestPayload>|undefined,reads=0;
+   const normalized='Every 3 days at 18:00 starting 2026-11-08: lifo';
+   const d={preparationText:vi.fn(async()=>{reads++;if(reads===2)return '{"schemaVersion":';return JSON.stringify(payload?{...empty(),responses:[{requestId:payload.id,digest:payload.digest,status:'ready',normalized,explanation:'Saved interpretation.'}]}:empty());}),createPreparationRequest:vi.fn(async(_id:string,p:unknown)=>{payload=p as typeof payload;return 'request';}),clearPreparationRequest:vi.fn(async()=>{})};
+   const sleep=vi.fn(async()=>{});
+   expect(await flexibleInterpretation('plan','Starting tomorrow at 6pm, newest first every third day',d,'doc',{now:()=>NOW,sleep})).toBe(normalized);
+   expect(sleep).toHaveBeenCalledOnce();
+ });
 });
 
 describe('dated one-time uploads',()=>{

@@ -57,15 +57,24 @@ export interface PreparationDrive {
 export async function flexibleInterpretation(kind:InterpretationKind,text:string,drive:PreparationDrive,documentId:string,options:{savedPlan?:string;now?:()=>number;sleep?:(ms:number)=>Promise<void>;onWaiting?:()=>void}={}):Promise<string> {
   try {await validateNormalized(kind,text);return text;} catch { /* Whole-entry interpretation below. */ }
   const now=options.now??Date.now;
+  const sleep=options.sleep??(ms=>new Promise(resolve=>setTimeout(resolve,ms)));
   // Fail before writing a request if preparation is not configured/readable.
   parsePreparation(await drive.preparationText(documentId));
   const payload=requestPayload(kind,text,now(),options.savedPlan);
   const fileId=await drive.createPreparationRequest(payload.id,payload);
   options.onWaiting?.();
-  const sleep=options.sleep??(ms=>new Promise(resolve=>setTimeout(resolve,ms)));
   try {
     for(;;) {
-      const result=matchingResponse(parsePreparation(await drive.preparationText(documentId)),payload,now());
+      if(now()>=Date.parse(payload.expiresAt)) throw new Error('ChatGPT preparation timed out; no settings changed. Check the cloud task/result Doc or use a formatted entry');
+      let prepared:Preparation;
+      try {prepared=parsePreparation(await drive.preparationText(documentId));}
+      catch {
+        // Docs exports can briefly reflect an in-progress rewrite. Never consume partial output;
+        // retry read-only until a valid snapshot arrives or this request expires.
+        await sleep(30000);
+        continue;
+      }
+      const result=matchingResponse(prepared,payload,now());
       if(result!==null) {await validateNormalized(kind,result);return result;}
       await sleep(30000);
     }

@@ -69,7 +69,8 @@ duplicate a file ID or request ID. Keep at most 1000 captions and the 100 most r
    Match records by BOTH file ID and exact current filename. Skip outro assets (names containing
    `outro` or used as an outro by a request), and generic IDs/camera/export labels.
 5. If anything changed, update `updatedAt` to the current ISO UTC timestamp and replace the result
-   Doc's plain text with the complete JSON. Use Google Docs revision control so a concurrent update
+   Doc's plain text with the complete JSON. Put deletion and insertion in ONE atomic batchUpdate
+   request, never separate calls that leave incomplete JSON. Use Google Docs revision control so a concurrent update
    fails instead of silently overwriting it. If the revision changed, re-read and merge first. Read back
    once to confirm the saved JSON. If nothing needs preparation, do not rewrite the Doc.
 6. Report only the number of prepared requests/captions and any blockers. Never claim publication.
