@@ -15,6 +15,11 @@ The wrapper checks the repository ID, owner, main branch, workflow_dispatch even
 context before loading account credentials. Pull requests, forks and local commands cannot use them.
 This is independent of the image pipeline; no image or desktop credentials are copied.
 
+Private GitHub-hosted workflow runs draw from the account's included compute allowance; additional
+usage can be billed or blocked according to payment/budget settings. Public standard-runner jobs are
+free. Review the account's allowance and budget before activation; avoiding OpenAI API billing does
+not guarantee unlimited free GitHub compute. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
 ## Dedicated sign-in
 
 1. Install the pinned official CLI: `npm install --global @openai/codex@0.160.0`.

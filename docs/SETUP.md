@@ -134,7 +134,7 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 
 ## 4. First checks (none of these publish)
 
-1. Tools → `verify` — identities, scopes, Drive folder, Activity API, Buffer schema, temporary-hosting privacy, free caption model.
+1. Tools → `verify` — identities, scopes, Drive folder, Buffer schema, temporary-hosting privacy, dedicated Codex sign-in.
 2. Tools → `dispatch_test` — Worker → GitHub dispatch round trip; a "Scheduled publish (Worker)" run
    appears and exits with "Dispatch verified".
 3. Tools → `preview` — selects (read-only), downloads, probes, plans formats, writes captions, renders
@@ -147,8 +147,8 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 |---|---|
 | Cloudflare Workers (1,440 cron wake-ups/day), D1 | free plan |
 | Cloudflare Workers KV (temporary videos, deleted after use, 6 h expiry) | free plan; over-limit writes fail rather than bill |
-| GitHub Actions (private repo) | ~3–8 min per publish run; free plan includes 2,000 min/month |
-| Captions (Cloudflare Workers AI, `@cf/meta/llama-3.3-70b-instruct-fp8-fast`) | $0: about 100 of the 10,000 free daily Neurons per topic caption; generic filenames use no model at all. On the Workers Free plan nothing can be billed. |
+| GitHub Actions (private repo) | Runs draw from the account's included compute allowance; additional usage may be billed or blocked. Actual runtime includes model calls, media rendering and provider polling. Review [current billing and budget settings](https://docs.github.com/en/billing/concepts/product-billing/github-actions) before activation. |
+| Codex interpretation and captions | Uses the existing ChatGPT subscription allowance; no paid OpenAI API key or automatic paid-model fallback. Generic filenames use no model. Subscription limits and reauthorization can interrupt AI work. |
 | Upload-Post (YouTube) | free plan, 10 uploads/month, no card |
 | Buffer | your existing plan; the API is included on all plans (free: 3,000 requests/30 days; we poll once per minute, ≤20 per post) |
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |
