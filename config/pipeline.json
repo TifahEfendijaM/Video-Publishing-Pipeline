@@ -53,10 +53,8 @@
     "longVideoPolicy": "segment"
   },
   "captions": {
-    "provider": "chatgpt_task",
-    "model": "ChatGPT cloud task",
-    "preparedDocumentId": "1NA6Yfv7fkokSkaWuPuSbqt7MSh-5dEaurvwetbNUUKM",
-    "requestInboxFileId": "1qAG3_UCPn56gnYYAKEEDwArCRWDZfaWl"
+    "provider": "codex_cli",
+    "model": "default"
   },
   "meta": {
     "graphVersion": "v24.0"

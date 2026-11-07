@@ -25,7 +25,7 @@ export interface PipelineConfig {
   stories: { longVideoPolicy: "skip" | "segment" };
   /** Outro used for a platform that has no saved outro choice (exact filename in the folder; "" = no default). */
   outros: { defaultFileName: string };
-  captions: { provider: "cloudflare_workers_ai" | "chatgpt_task"; model: string; preparedDocumentId?: string; requestInboxFileId?: string };
+  captions: { provider: "cloudflare_workers_ai" | "codex_cli"; model: string };
   meta: { graphVersion: string };
   hosting: { presignedUrlTtlSeconds: number };
   polling: { metaMaxMinutes: number; bufferMaxMinutes: number; youtubeMaxMinutes: number; uploadPostMaxMinutes: number };
@@ -53,6 +53,7 @@ export const SECRET_NAMES = [
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",
   "CREDENTIALS_ENCRYPTION_KEY",
+  "VIDEO_CODEX_AUTH_JSON",
 ] as const;
 
 export type SecretName = (typeof SECRET_NAMES)[number];
