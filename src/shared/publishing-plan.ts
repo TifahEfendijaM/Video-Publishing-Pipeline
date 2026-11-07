@@ -24,7 +24,7 @@ export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
     const schedule = parseTimetable(entry.scheduleText);
     if (!schedule) throw new Error('Each entry needs a timetable');
     // A missing interval anchor may belong to a saved phase. Only the Worker can resolve it.
-    if(Array.isArray(schedule)||schedule.startDate) {
+    if(Array.isArray(schedule)||schedule.kind==='once'||schedule.startDate) {
       if(schedules.some(s=>timetablesOverlap(s,schedule))) throw new Error('Two rules use the same weekday and time or overlapping recurrence; give each occurrence one selection rule');
       schedules.push(schedule);
     }
@@ -33,6 +33,7 @@ export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
     if (!['fifo', 'lifo', 'random', 'custom', 'title_rule'].includes(entry.policy)) throw new Error('Invalid selection rule');
     if (!Array.isArray(entry.custom) || entry.custom.length > 500) throw new Error('Invalid Custom list');
     if (entry.policy === 'custom' && !entry.custom.length) throw new Error('A Custom list needs at least one filename');
+    if (!Array.isArray(schedule) && schedule.kind==='once' && entry.policy==='custom' && entry.custom.length!==1) throw new Error('A one-time Custom entry takes exactly one filename');
     if (entry.policy !== 'custom' && entry.custom.length) throw new Error('Only a Custom entry can have a filename list');
     for (const v of entry.custom) {
       if (!v || !/^[A-Za-z0-9_-]{10,200}$/.test(v.fileId) || typeof v.fileName !== 'string' || !v.fileName.trim() || v.fileName.length > 300) throw new Error('Invalid Custom filename');

@@ -2,6 +2,7 @@ import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
 import { interpretVideoRule } from "./video-rule";
 import { interpretPlan, interpretManualEntry, resolveManualEntry, resolvePlan } from "./publishing-plan";
+import { flexibleInterpretation, noModel, parsePreparation, preparedCaptionModel, writeWorkflowOutput, type InterpretationKind, type Preparation } from './cloud-preparation';
 // GitHub Actions runner entry point.
 //   configure  — "Publish video" form (run_mode manual_now | automated)
 //   scheduled  — dispatched by the Cloudflare Worker (or dispatch test)
@@ -40,6 +41,65 @@ function stateClient(): StateClient {
   const token = sec("STATE_API_TOKEN");
   if (!url || !token) throw new Error("STATE_API_URL (repository variable) and STATE_API_TOKEN (secret) must be configured");
   return new StateClient(url, token);
+}
+
+function legacyModel() {
+  return {accountId:env('CLOUDFLARE_ACCOUNT_ID'),token:sec('CLOUDFLARE_AI_TOKEN'),model:cfg.captions.model};
+}
+const selectionModel=()=>cfg.captions.provider==='chatgpt_task' ? noModel : legacyModel();
+let preparation:Promise<Preparation>|undefined;
+function prepared() {
+  if(!cfg.captions.preparedDocumentId) throw new Error('ChatGPT preparation document is not configured');
+  return preparation??=(async()=>parsePreparation(await (await drive()).preparationText(cfg.captions.preparedDocumentId!)))();
+}
+async function captionsFor(video:{id:string;name:string}) {
+  if(cfg.captions.provider!=='chatgpt_task') return makeCaptions(video.name,legacyModel());
+  try {return makeCaptions(video.name,preparedCaptionModel(await prepared(),video.id,video.name));}
+  catch(e) {return makeCaptions(video.name,{model:'ChatGPT cloud task',run:async()=>{throw e;}});}
+}
+
+function preparationDrive() {
+  let client:Promise<Drive>|undefined,started=0;
+  const current=()=>{if(!client || Date.now()-started>45*60000){started=Date.now();client=drive();}return client;};
+  return {
+    preparationText:async(id:string)=>(await current()).preparationText(id),
+    createPreparationRequest:async(id:string,payload:unknown)=>(await current()).createPreparationRequest(id,payload),
+    trashPreparationRequest:async(fileId:string,id:string)=>(await current()).trashPreparationRequest(fileId,id),
+  };
+}
+
+/** Wait outside the publishing concurrency group, so preparation cannot delay due uploads. */
+async function cmdPrepareInput() {
+  const s=new Summary();
+  s.h(1,'Prepare publishing input');
+  const mode=env('RUN_MODE'), action=env('PLAN_ACTION')||'edit';
+  let planText=env('PUBLISHING_PLAN'),manualText=env('VIDEO_SELECTION');
+  let expectedRevision='';
+  if(cfg.captions.provider==='chatgpt_task') {
+    const kind=mode==='manual_now' ? 'manual' : action==='edit' && planText ? 'plan' : null;
+    const text=kind==='manual' ? manualText : planText;
+    if(kind && text) {
+      const saved=await stateClient().plan();
+      if(kind==='plan') expectedRevision=String(saved.revision);
+      const savedPlan=saved.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}`).join(' | ');
+      if(!cfg.captions.preparedDocumentId) throw new Error('ChatGPT preparation Doc is not configured');
+      const normalized=await flexibleInterpretation(kind,text,preparationDrive(),cfg.captions.preparedDocumentId,{savedPlan,onWaiting:()=>{new Summary().p('Waiting for the hourly ChatGPT cloud task. No settings have changed. This may take up to 70 minutes; formatted entries do not wait.').write();}});
+      if(kind==='manual') manualText=normalized; else planText=normalized;
+      s.p('Interpreted input was validated. The next job checks current filenames and saves/applies it.');
+      s.code(normalized);
+    }
+  }
+  const output=env('GITHUB_OUTPUT');
+  if(!output) throw new Error('prepare-input requires GITHUB_OUTPUT');
+  for(const [name,value] of Object.entries({publishing_plan:planText,video_selection:manualText,expected_plan_revision:expectedRevision})) writeWorkflowOutput(output,name,value);
+  s.write();
+}
+
+async function flexiblePreview(kind:InterpretationKind,text:string) {
+  if(cfg.captions.provider!=='chatgpt_task') return text;
+  if(!cfg.captions.preparedDocumentId) throw new Error('ChatGPT preparation Doc is not configured');
+  const saved=await stateClient().plan();
+  return flexibleInterpretation(kind,text,preparationDrive(),cfg.captions.preparedDocumentId,{savedPlan:saved.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}`).join(' | ')});
 }
 
 function archiveOptions() {
@@ -339,11 +399,11 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       for (const f of stories.files) copyFileSync(f.path, join(env("PREVIEW_DIR"), `${f.surface}.mp4`));
     }
 
-    const captions = await makeCaptions(v.name, { accountId: env("CLOUDFLARE_ACCOUNT_ID") || undefined, token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
+    const captions = await captionsFor(v);
     s.h(2, "Text");
     s.kv([
       ["Filename", captions.analysis.meaningful ? `meaningful — topic hint: "${captions.analysis.topicHint}"` : `generic (${captions.analysis.reason})`],
-      ["Caption source", captions.source === "generated" ? `generated by ${cfg.captions.model} (Cloudflare Workers AI, free tier)` : "stored generic caption"],
+      ["Caption source", captions.source === "generated" ? `prepared/generated by ${cfg.captions.model}` : "stored generic caption"],
     ]);
     if (captions.notes.length) s.list(captions.notes);
     s.p("Caption (Instagram Reel, Facebook, TikTok):").code(captions.caption);
@@ -416,7 +476,7 @@ async function cmdConfigure() {
   const mode = env("RUN_MODE");
   const selection = env("VIDEO_SELECTION");
   const planText = env("PUBLISHING_PLAN");
-  const model = { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model };
+  const model = selectionModel();
   const actor = env("GITHUB_ACTOR") || "github";
   if (!["manual_now", "automated"].includes(mode)) throw new Error("run_mode must be manual_now or automated");
   s.h(1, `EasyBosnian video — ${mode}`);
@@ -469,6 +529,7 @@ async function cmdConfigure() {
   const action = env("PLAN_ACTION") || "edit";
   if (!["edit", "pause", "resume"].includes(action)) throw new Error("Choose Edit, Pause or Resume");
   const saved = await state.plan();
+  if(action==='edit' && env('EXPECTED_PLAN_REVISION') && env('EXPECTED_PLAN_REVISION')!==String(saved.revision)) throw new Error('The saved plan or Custom progress changed during preparation; no edits saved. Submit the request again');
   if (action === 'edit') {
     const interpreted = planText ? await interpretPlan(planText, model) : undefined;
     const entries = interpreted ? resolvePlan(interpreted, interpreted.some(e => e.policy === 'custom' || Object.values(e.outroNames ?? {}).some(name => name !== null)) ? await (await drive()).listVideos() : [], saved.entries) : undefined;
@@ -601,16 +662,16 @@ async function cmdTools() {
       throw new Error(`dispatch test failed with HTTP ${r.githubStatus}`);
     }
   } else if (action === "manual_preview") {
-    const parsed=await interpretManualEntry(target,{accountId:env("CLOUDFLARE_ACCOUNT_ID"),token:sec("CLOUDFLARE_AI_TOKEN"),model:cfg.captions.model});
+    const parsed=await interpretManualEntry(await flexiblePreview('manual',target),selectionModel());
     const resolved=resolveManualEntry(parsed,await (await drive()).listVideos());
     s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
     s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
   } else if (action === "plan_preview") {
-    const interpreted = await interpretPlan(target, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
+    const interpreted = await interpretPlan(await flexiblePreview('plan',target),selectionModel());
     s.p('Interpreted plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving. A new every-N-days interval without a starting date uses the local save date; matching existing intervals keep their anchor.');
     s.table(['Timetable', 'Selection', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
   } else if (action === "rule_preview") {
-    const interpreted = await interpretVideoRule(target, { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
+    const interpreted = await interpretVideoRule(await flexiblePreview('rule',target),selectionModel());
     s.p(`Interpreted rule: ${interpreted.explanation} Nothing was saved or published.`);
   } else if (action === "verify") {
     await verify(s, state);
@@ -737,7 +798,12 @@ async function verify(s: Summary, state: StateClient) {
       add("Optional R2 hosting (files > 24 MB)", false, summarizeError(e, 200));
     }
   } else add("Optional R2 hosting (files > 24 MB)", null, "not configured (not needed for videos up to 24 MB)");
-  if (sec("CLOUDFLARE_AI_TOKEN") && env("CLOUDFLARE_ACCOUNT_ID")) {
+  if(cfg.captions.provider==='chatgpt_task') {
+    try {
+      const p=await prepared();
+      add('ChatGPT cloud preparation',true,`Private Doc readable; ${p.captions.length} prepared captions. Last updated ${p.updatedAt??'not yet'}. No AI API is called by GitHub.`);
+    } catch(e) {add('ChatGPT cloud preparation',false,summarizeError(e,200));}
+  } else if (sec("CLOUDFLARE_AI_TOKEN") && env("CLOUDFLARE_ACCOUNT_ID")) {
     try {
       const r = await makeCaptions("pozdravi_na_bosanskom.mp4", { accountId: env("CLOUDFLARE_ACCOUNT_ID"), token: sec("CLOUDFLARE_AI_TOKEN"), model: cfg.captions.model });
       add("Free caption model (Workers AI)", r.source === "generated", r.source === "generated" ? `${cfg.captions.model} answered with a valid Bosnian test caption` : r.notes.join(" "));
@@ -784,9 +850,9 @@ async function reconcile(s: Summary, state: StateClient) {
 }
 
 const cmd = process.argv[2];
-const handlers: Record<string, () => Promise<void>> = { configure: cmdConfigure, scheduled: cmdScheduled, tools: cmdTools };
+const handlers: Record<string, () => Promise<void>> = { 'prepare-input':cmdPrepareInput, configure: cmdConfigure, scheduled: cmdScheduled, tools: cmdTools };
 if (!handlers[cmd]) {
-  console.error("usage: main.ts configure|scheduled|tools");
+  console.error("usage: main.ts prepare-input|configure|scheduled|tools");
   process.exit(2);
 }
 handlers[cmd]().catch((e) => {

@@ -18,11 +18,11 @@ on:
         required: true
         options: [edit, pause, resume]
       publishing_plan:
-        description: 'Scheduled Edit only. Pair weekly/every-N-days times and rules, separated by | or newlines. Example: every two days at 18:00: lifo | Mon and Wed 06:00: lifo | Fri 21:00: random | Sun 18:00: custom: "Video A.mp4", "Video B.mp4". All times Europe/Sarajevo.'
+        description: 'Scheduled Edit: describe the complete plan naturally, with exact filenames and times. Example: Upload "Video.mp4" tonight at 21:00 without an outro, then newest first every third day from tomorrow at 18:00 with "End.mp4". ChatGPT preparation may take up to 70 minutes. Formatted plans remain instant. All times Sarajevo.'
         type: string
         required: false
       video_selection:
-        description: 'Manual only: video selection plus optional outro, e.g. custom: "Video.mp4"; outro: "End.mp4" or lifo; outro: none. One outro for all platforms. Blank uses saved defaults. Use default; outro: "End.mp4" to keep the default video rule.'
+        description: 'Manual only: describe one video and outro naturally, or use custom: "Video.mp4"; outro: none for an instant entry. Natural text waits for hourly ChatGPT preparation before uploading. Blank uses saved defaults. One shared outro for all platforms.'
         type: string
         required: false
       manual_schedule_action:
@@ -35,14 +35,43 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: easybosnian-publishing
-  cancel-in-progress: false
-
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    outputs:
+      publishing_plan: ${{ steps.prepare.outputs.publishing_plan }}
+      video_selection: ${{ steps.prepare.outputs.video_selection }}
+      expected_plan_revision: ${{ steps.prepare.outputs.expected_plan_revision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prepare input without blocking scheduled uploads
+        id: prepare
+        run: npx tsx runner/src/main.ts prepare-input
+        env:
+          RUN_MODE: ${{ inputs.run_mode }}
+          PLAN_ACTION: ${{ inputs.plan_action }}
+          PUBLISHING_PLAN: ${{ inputs.publishing_plan }}
+          VIDEO_SELECTION: ${{ inputs.video_selection }}
+          STATE_API_URL: ${{ vars.STATE_API_URL }}
+          STATE_API_TOKEN: ${{ secrets.STATE_API_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
   run:
+    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    concurrency:
+      group: easybosnian-publishing
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,9 +87,10 @@ jobs:
         env:
           RUN_MODE: ${{ inputs.run_mode }}
           PLAN_ACTION: ${{ inputs.plan_action }}
-          PUBLISHING_PLAN: ${{ inputs.publishing_plan }}
+          PUBLISHING_PLAN: ${{ needs.prepare.outputs.publishing_plan }}
+          EXPECTED_PLAN_REVISION: ${{ needs.prepare.outputs.expected_plan_revision }}
           MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
-          VIDEO_SELECTION: ${{ inputs.video_selection }}
+          VIDEO_SELECTION: ${{ needs.prepare.outputs.video_selection }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

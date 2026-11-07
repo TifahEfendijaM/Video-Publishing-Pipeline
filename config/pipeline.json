@@ -53,8 +53,9 @@
     "longVideoPolicy": "segment"
   },
   "captions": {
-    "provider": "cloudflare_workers_ai",
-    "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    "provider": "chatgpt_task",
+    "model": "ChatGPT cloud task",
+    "preparedDocumentId": "1NA6Yfv7fkokSkaWuPuSbqt7MSh-5dEaurvwetbNUUKM"
   },
   "meta": {
     "graphVersion": "v24.0"

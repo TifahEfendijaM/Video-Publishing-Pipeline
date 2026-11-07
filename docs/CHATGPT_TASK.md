@@ -102,6 +102,8 @@ optional semicolon-separated outro clauses. A plan Edit replaces the WHOLE saved
 that explicitly add/change/retain part of `savedPlan`, output the full resulting plan, preserving the
 other entries and original unchanged Custom lists. For an explicit replacement, output only the
 requested replacement. Never remove existing entries merely because an additive request omitted them.
+Unchanged Custom lists in `savedPlan` may include already archived filenames; preserve them verbatim
+without requiring those old files to remain in the source folder. Newly selected files must exist.
 If replacement versus addition is unclear and would change existing entries, request clarification.
 
 Schedules support weekly weekdays/times, every 1-365 calendar days, and dated one-time events.

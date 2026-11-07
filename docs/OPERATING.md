@@ -11,11 +11,30 @@ plan, which simply reports the saved plan without changing it.
 |---|---|
 | `run_mode` | `automated` edits/pauses/resumes the plan, never publishes immediately. `manual_now` publishes one video now. |
 | `plan_action` | `edit` replaces the complete plan when text is supplied; `pause` and `resume` retain its rules and Custom progress. |
-| `publishing_plan` | Pair every timetable with its selection rule, separated by newlines or ` | `. Blank Edit retains the saved pairs and Custom progress. Ignored for Pause/Resume/manual. |
+| `publishing_plan` | Describe the whole plan naturally, or pair timetables/rules with newlines or ` | `. Natural text waits for the hourly cloud ChatGPT task (up to 70 minutes). Blank Edit retains saved pairs/progress. Ignored for Pause/Resume/manual. |
 | `video_selection` | Manual only: one combined video/outro entry, such as `lifo; outro: "End.mp4"` or `custom: "Video.mp4"; outro: none`. Blank uses saved defaults. |
 | `manual_schedule_action` | Manual only: `keep_schedule` (default) leaves the plan untouched; `pause_schedule` pauses it before the one-off upload. |
 
 ### Write paired timetables and rules
+
+You may instead enter ordinary language with explicit times and exact filenames, for example:
+
+```text
+Replace the plan: publish "Lesson.mp4" tonight at 21:00 without an outro. Starting tomorrow at 18:00, publish the newest video every third day with "Ending.mp4" as the outro.
+```
+
+The hourly ChatGPT cloud task returns a normalized plan through private Drive storage. The GitHub
+preparation job waits up to 70 minutes outside the publishing lock. No settings change while waiting;
+a timeout, ambiguity, invalid result or concurrent plan/progress edit fails without saving. Formatted
+entries below bypass that wait. Specify whether to replace the whole plan or add/change an existing
+entry when writing naturally. Existing formatted Edit behavior still replaces the entire plan.
+Manual natural text uses the same preparation and delay; exact manual entries remain immediate.
+Missing clock times or unclear filenames/order need clarification. Submit time-sensitive requests
+well ahead of the intended upload. Relative dates use the submission timestamp in Europe/Sarajevo.
+
+True one-time dates are supported, e.g. `Once on 2026-11-07 at 21:00: custom: "Lesson.mp4"; outro: none`.
+This has only one possible occurrence. A new entry in the past is rejected; missed occurrences are
+never backfilled. A one-time Custom entry takes exactly one filename.
 
 For example, enter this as lines or as one line with ` | ` between entries:
 
@@ -26,11 +45,11 @@ Sunday at 18:00: publish this list in order: "Video A.mp4", "Video B.mp4"
 ```
 
 The timetable comes first, followed by a colon and space, then its rule. `=>` can also separate them.
-Use **weekly weekdays and times**, or **every N days at a time**, in Europe/Sarajevo time. A start date is optional for day intervals; one-off calendar dates and arbitrary relative-date instructions are unsupported.
+Use **weekly weekdays and times**, **every N days at a time**, or **Once on YYYY-MM-DD at HH:MM**, in Europe/Sarajevo time. A start date is optional for day intervals. Natural relative-date instructions are normalized by the cloud task before validation.
 The parser pairs each timetable with its rule before interpreting it; rules never depend on a matching
 position in a separate field. Overlapping occurrences (two rules for the same weekday/time) are rejected.
 There can be at most 20 entries and 50 timetable slots. Title-rule interpretation uses the existing
-Workers AI connection at Edit time; scheduled runs use the saved interpretation without calling AI again.
+cloud ChatGPT task at Edit time; scheduled runs use the saved interpretation without calling AI again.
 Simple FIFO/LIFO/Random and exact lists are interpreted directly.
 
 Supported selections:
@@ -160,7 +179,7 @@ later with Scheduled → Resume. One-off uploads work while the scheduled plan i
 
 ## Schedule syntax
 
-Weekly or every-N-days recurring, Europe/Sarajevo time (summer/winter time handled automatically).
+Weekly, every-N-days recurring, or dated one-time, Europe/Sarajevo time (summer/winter time handled automatically).
 
 - Practical: `tuesday-5pm monday-6am friday 9-pm` → `Mon 06:00; Tue 17:00; Fri 21:00`
 - Recommended format: `Mon 06:00; Wed 17:00; Fri 21:00` (24-hour clock).
@@ -169,7 +188,7 @@ Weekly or every-N-days recurring, Europe/Sarajevo time (summer/winter time handl
 - Also accepted: `fri 5 a.m.`, `wed 19.30`, `mon 0600`, `tue 17h`, `noon`, `midnight`, `mon wed 5pm`
   (both days 17:00), `mon 6am 6pm` (two times), Bosnian day names (`petak 05:00`).
 - Rejected with an explanation (old settings kept): `friday 9` (am or pm?), `5pm` (no day), `fri 13pm`,
-  `fri 24:00`, dates like `2026-10-09`.
+  `fri 24:00`, bare dates like `2026-10-09` without the `Once on ... at ...` form.
 - Duplicates are removed and slots are sorted Monday-first.
 - DST edge cases: a time that doesn't exist on the spring-forward night (02:00–02:59) runs one hour later;
   a time that happens twice on the autumn night runs once (the first time).
@@ -265,11 +284,14 @@ Bosnian). A Bosnian word or phrase from the topic may appear, spelled with corre
 - Filenames made of IDs, numbers, dates or generic camera/export/AI-tool labels (e.g.
   `gemini_generated_video_0A28F2A0.mp4`, `178904548924381.mp4`, `Made with Veo 3.mp4`) get the reviewed
   generic English caption in `config/generic-caption.json` — no topic is invented. Edit that file to change it.
-- Meaningful filenames (e.g. `na vrh brda vrba mrda.mp4`) get a topic caption written by a free Cloudflare
-  Workers AI model (Llama 3.3 70B) from the filename hint only (treated as data). The output is rejected if it
+- Meaningful filenames (e.g. `na vrh brda vrba mrda.mp4`) get a topic caption prepared by the
+  ChatGPT cloud task from the filename hint only (treated as data). Prepared text is matched by Drive
+  file ID and current exact filename. No AI API is called at upload time. The output is rejected if it
   does not read as English or uses Cyrillic, and is validated for banned content (CEFR levels, corrections,
   references to earlier/deleted posts or internal tooling, foreign links) and each platform's limits, always
-  ending with `👉easybosnian.com`. Any failure → generic caption, reported. Text is never truncated.
+  ending with `👉easybosnian.com`. Missing/invalid preparation or any failure → generic caption,
+  reported. Text is never truncated. New or renamed files are prepared on future hourly task runs;
+  the task handles up to 10 new captions per run, prioritizing requested and newest videos.
 
 ## Stories
 

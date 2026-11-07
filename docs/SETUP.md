@@ -1,7 +1,27 @@
 # Setup, authorization and deployment
 
 Everything runs in the cloud: a Cloudflare Worker (timing + dispatch + small state API on D1) and GitHub
-Actions runners (download, ffprobe/ffmpeg, captions, uploads). Nothing depends on your computer or on Claude.
+Actions runners (download, ffprobe/ffmpeg, uploads) and an hourly ChatGPT cloud task (interpretation,
+captions/titles). Nothing depends on your computer or on Claude.
+
+## ChatGPT subscription preparation (default)
+
+`config/pipeline.json` selects `captions.provider = "chatgpt_task"`. It reads the preparation Google
+Doc identified by `captions.preparedDocumentId`, which must be directly in the source folder so the
+existing Drive identity can read it. No OpenAI API key, paid AI API, local app, or local credentials are
+used by this path. The connected ChatGPT GitHub and Google Drive plugins handle preparation.
+
+Create/keep the hourly cloud task described in [CHATGPT_TASK.md](CHATGPT_TASK.md), and verify its
+settings explicitly say **Runs on Cloud**. A desktop/local task is unsuitable. Subscription task/tool
+availability and usage limits still apply. The task must be able to read this repository and the source
+folder and edit only the result Doc. Keep all source filenames, requests and generated copy in Drive.
+GitHub creates private short-lived JSON request files; the cloud task only reads them and writes the
+result Doc. Completed/expired requests are moved to Drive Trash by their originating preparation job.
+
+Run a nonpublishing **Tools → plan_preview** with a natural request to test the complete handoff.
+Run **Tools → verify** to check the preparation Doc is accessible to the pipeline identity. Deploy
+the updated Worker before saving dated `Once on ...` entries. Existing formatted entries can still
+be used immediately while ChatGPT preparation is unavailable.
 
 **This project shares nothing with the image-card pipeline**: its own repository, Worker
 (`easybosnian-video-scheduler`), D1 database (`easybosnian-video-pipeline`), KV namespace and secrets.
@@ -18,7 +38,7 @@ Do not reuse that project's tokens; create new ones below.
 | 4 | **Meta app + system user** | developers.facebook.com → Create app (Business) linked to your Business portfolio; business.facebook.com → Users → **System users** → add (Admin) → assign the Easy Bosnian **Page** (full control) and the **@easy_bosnian** Instagram account → Generate token (never expires) | Permissions: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`, `business_management`. Then exchange for the **Page** token: `GET /{page-id}?fields=access_token` with the system-user token. | ⏳ you |
 | 5 | **Buffer API key** (TikTok + YouTube Shorts) | publish.buffer.com/settings/api; Buffer → Channels → connect YouTube **@EasyBosnian** | Personal API key of the Buffer account where @easy.bosnian TikTok is connected. TikTok and YouTube (@EasyBosnian, for Shorts) must be connected in Buffer (free plan: 3 channels). | ⏳ you |
 | 5b | **Upload-Post** (YouTube regular videos) | app.upload-post.com → sign up (free, no card) → create a profile named `easybosnian` → connect YouTube as the **@EasyBosnian** channel → API Keys → create key | Free plan: 10 uploads/month. | ⏳ you |
-| 6 | **Cloudflare Workers AI token** (free captions) | dash.cloudflare.com → API Tokens → Create custom token | Account permission **Workers AI: Read** only. Keep the account on the **Workers Free plan**: the free allowance is 10,000 Neurons/day (one caption ≈ 100) and usage above it is refused, never billed. | ⏳ you |
+| 6 | **Cloudflare Workers AI token** (legacy alternative only) | Optional when explicitly selecting `cloudflare_workers_ai` instead of ChatGPT preparation | Not required or called by the default `chatgpt_task` provider. Retain an existing token only if using that legacy provider. | optional |
 | 7 | **Cloudflare deploy token** | dash.cloudflare.com → My Profile → API Tokens → Create custom token | Account permissions: **Workers Scripts: Edit**, **D1: Edit**, **Workers KV Storage: Edit**; Account Resources: your account only. No payment method needed: temporary video hosting uses the free Workers KV (≤24 MB per video). R2 is optional and only for videos over 24 MB (R2 requires a card on file, so it is left off). | ⏳ you |
 | 8 | **GitHub dispatch token** for the Worker | github.com/settings/personal-access-tokens → Fine-grained | Resource owner TifahEfendijaM; **Only select repositories: Video-Publishing-Pipeline**; Repository permissions: **Actions: Read and write** (Metadata: read is automatic). Nothing else. Expiry: up to 1 year (calendar a renewal). | ⏳ you |
 

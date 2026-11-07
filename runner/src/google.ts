@@ -148,6 +148,32 @@ export class Drive {
     return json(u, { label: "drive folder", headers: this.h() });
   }
 
+  /** Private machine-readable handoff; no video bytes or public repository writes. */
+  async preparationText(documentId: string): Promise<string> {
+    const meta=await this.metadata(documentId);
+    if(meta.trashed || meta.mimeType!=='application/vnd.google-apps.document' || !meta.parents?.includes(this.folderId)) throw new Error('ChatGPT preparation Doc must be directly in the source folder');
+    const res=await request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(documentId)}/export?mimeType=text%2Fplain`,{label:'Drive ChatGPT preparation',headers:this.h(),timeoutMs:30000});
+    if(!res.ok) throw new HttpStatusError(res.status,'Could not read the preparation Doc','Drive ChatGPT preparation');
+    const text=await res.text();
+    if(Buffer.byteLength(text)>2000000) throw new Error('ChatGPT preparation Doc exceeds 2 MB');
+    return text;
+  }
+
+  async createPreparationRequest(id: string, payload: unknown): Promise<string> {
+    if(!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid preparation request ID');
+    const boundary='easybosnian_'+randomBytes(16).toString('hex');
+    const metadata={name:`easybosnian-ai-request-${id}.json`,mimeType:'application/json',parents:[this.folderId]};
+    const body=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(payload)}\r\n--${boundary}--\r\n`;
+    const file=await json<{id:string}>('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true',{label:'Drive create private interpretation request',method:'POST',headers:{...this.h(),'content-type':`multipart/related; boundary=${boundary}`},body});
+    return file.id;
+  }
+
+  async trashPreparationRequest(fileId:string,id:string):Promise<void> {
+    const meta=await this.metadata(fileId);
+    if(meta.name!==`easybosnian-ai-request-${id}.json` || meta.mimeType!=='application/json' || !meta.parents?.includes(this.folderId)) throw new Error('Refusing to clean up a file that is not this preparation request');
+    await json(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`,{label:'Drive clean up interpretation request',method:'PATCH',headers:{...this.h(),'content-type':'application/json'},body:JSON.stringify({trashed:true})});
+  }
+
   /** Lists videos directly in the folder. Throws on any auth/network error — never returns an empty list on failure. */
   async listVideos(folderId = this.folderId): Promise<FolderVideo[]> {
     const out: FolderVideo[] = [];
