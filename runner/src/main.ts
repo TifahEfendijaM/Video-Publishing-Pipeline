@@ -1,7 +1,6 @@
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
-import { interpretVideoRule } from "./video-rule";
-import { interpretPlan, interpretManualEntry, resolveManualEntry, resolvePlan } from "./publishing-plan";
+import { interpretPlan, interpretManualEntry, interpretSelection, resolveManualEntry, resolvePlan } from "./publishing-plan";
 import { flexibleInterpretation, noModel, parsePreparation, preparedCaptionModel, writeWorkflowOutput, validateNormalized, type InterpretationKind, type Preparation } from './cloud-preparation';
 // GitHub Actions runner entry point.
 //   configure  — "Publish video" form (run_mode manual_now | automated)
@@ -681,8 +680,8 @@ async function cmdTools() {
     s.p('Interpreted plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving. A new every-N-days interval without a starting date uses the local save date; matching existing intervals keep their anchor.');
     s.table(['Timetable', 'Selection', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
   } else if (action === "rule_preview") {
-    const interpreted = await interpretVideoRule(await flexiblePreview('rule',target),selectionModel());
-    s.p(`Interpreted rule: ${interpreted.explanation} Nothing was saved or published.`);
+    const interpreted = await interpretSelection(await flexiblePreview('rule',target),selectionModel());
+    s.p(`Interpreted rule: ${selectionDescription({...interpreted,originalCustom:interpreted.filenames.map(fileName=>({fileName}))})}. Nothing was saved or published.`);
   } else if (action === "verify") {
     await verify(s, state);
   } else if (action === "preview") {

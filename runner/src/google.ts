@@ -176,7 +176,7 @@ export class Drive {
   private async requestInbox():Promise<any> {
     if(!this.requestInboxId) throw new Error('ChatGPT request inbox is not configured');
     const meta=await this.metadata(this.requestInboxId);
-    if(meta.trashed || meta.name!=='easybosnian-ai-request-inbox.txt' || meta.mimeType!=='text/plain' || !meta.parents?.includes(this.folderId)) throw new Error('ChatGPT request inbox must be the configured JSON file directly in the source folder');
+    if(meta.trashed || meta.name!=='easybosnian-ai-request-inbox.txt' || meta.mimeType!=='text/plain' || !meta.parents?.includes(this.folderId)) throw new Error('ChatGPT request inbox must be the configured text file directly in the source folder');
     const res=await request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(this.requestInboxId)}?alt=media&supportsAllDrives=true`,{label:'Drive private request inbox',headers:this.h(),timeoutMs:30000});
     if(!res.ok) throw new HttpStatusError(res.status,'Could not read the request inbox','Drive private request inbox');
     return JSON.parse((await res.text()).replace(/^\uFEFF/,''));
