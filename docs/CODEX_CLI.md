@@ -8,17 +8,26 @@ Codex uses the ChatGPT subscription's limits. API keys and automatic paid-provid
 
 ## Activation prerequisites
 
-Keep this migration unmerged until the video repository is **private**, and a new sign-in dedicated to
-this video pipeline is ready. OpenAI's [non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode)
-says: "Do not use this workflow for public or open-source repositories."
-The wrapper checks the repository ID, owner, main branch, workflow_dispatch event and private-repository
-context before loading account credentials. Pull requests, forks and local commands cannot use them.
-This is independent of the image pipeline; no image or desktop credentials are copied.
+The user explicitly authorized the existing public video repository with the same guarded execution
+approach as the daily image pipeline. This is a deliberate exception to OpenAI's
+[non-interactive guidance](https://learn.chatgpt.com/docs/non-interactive-mode), which advises against
+account-auth CI in public repositories. Public visibility does not make credentials public, but leaks
+through logs, artifacts or untrusted code remain a risk. Do not broaden this authorization to other
+repositories, pull requests, forks or branches.
 
-Private GitHub-hosted workflow runs draw from the account's included compute allowance; additional
-usage can be billed or blocked according to payment/budget settings. Public standard-runner jobs are
-free. Review the account's allowance and budget before activation; avoiding OpenAI API billing does
-not guarantee unlimited free GitHub compute. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+Both the workflow job and wrapper check the exact repository ID, owner, main branch and
+workflow_dispatch event. The wrapper also verifies live repository metadata before loading credentials
+and before saving a refreshed login. Public and private visibility are accepted; unknown visibility,
+renames, transfers, forks and a changed default branch fail closed.
+
+The video login is separate from the image and desktop sessions. GitHub holds its dedicated bootstrap
+secret; refreshed credentials are encrypted in the video's existing D1 state store and read back before
+publishing. This provides refresh persistence without another GitHub secret-writing token. The image
+pipeline instead writes refreshed credentials back to GitHub Secrets; neither pipeline shares its login.
+
+Standard public GitHub-hosted runner jobs are free. If the repository later becomes private, runs draw
+from the account's included compute allowance and additional usage can be billed or blocked according
+to its settings. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
 ## Dedicated sign-in
 
@@ -36,7 +45,7 @@ not guarantee unlimited free GitHub compute. See [GitHub Actions billing](https:
 6. Only after both succeed, delete the obsolete hourly ChatGPT task. The old result Doc/inbox may
    then be removed; no workflow reads or updates them after migration.
 
-For example, on a trusted computer, with the video repository already private:
+For example, on a trusted computer, using a fresh directory only for this video pipeline:
 
 ```sh
 VIDEO_CODEX_LOGIN_DIR="$(mktemp -d)"

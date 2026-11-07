@@ -10,9 +10,9 @@ sign-in, publishing does not depend on your computer or on a separate ChatGPT sc
 The CLI starts only when a GitHub run needs interpretation or captions. It refuses paid API keys and
 has no automatic paid-provider fallback. Subscription limits still apply.
 
-**Before activating:** the repository must be private and a new sign-in must be created specifically
-for the video pipeline. See [CODEX_CLI.md](CODEX_CLI.md) for the official documentation constraint,
-secure login procedure, encrypted token rotation and nonpublishing validation steps. Keep the current
+**Before activating:** create a new sign-in specifically for the video pipeline. Public repository
+execution is explicitly authorized with the same guarded approach as the image pipeline. See [CODEX_CLI.md](CODEX_CLI.md) for the official documentation constraint,
+authorized public-execution boundary, secure login procedure, encrypted token rotation and nonpublishing validation steps. Keep the current
 hourly task until the CLI path is verified, then delete it. The new path needs no Drive inbox/result Doc.
 
 **This project shares nothing with the image-card pipeline**: its own repository, Worker
@@ -138,7 +138,7 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 2. Tools → `dispatch_test` — Worker → GitHub dispatch round trip; a "Scheduled publish (Worker)" run
    appears and exits with "Dispatch verified".
 3. Tools → `preview` — selects (read-only), downloads, probes, plans formats, writes captions, renders
-   Story files as a private artifact.
+   Story files. Artifacts are uploaded only for a private repository; public runs expose only the redacted summary.
 4. Only when you decide: Tools → `publishing_enable` (kill switch ON). It starts **OFF**.
 
 ## 5. Costs (expected)
@@ -147,7 +147,7 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 |---|---|
 | Cloudflare Workers (1,440 cron wake-ups/day), D1 | free plan |
 | Cloudflare Workers KV (temporary videos, deleted after use, 6 h expiry) | free plan; over-limit writes fail rather than bill |
-| GitHub Actions (private repo) | Runs draw from the account's included compute allowance; additional usage may be billed or blocked. Actual runtime includes model calls, media rendering and provider polling. Review [current billing and budget settings](https://docs.github.com/en/billing/concepts/product-billing/github-actions) before activation. |
+| GitHub Actions | Standard runners are free for this authorized public repository. If made private later, runs draw from the account's included compute allowance and overages may be billed or blocked. See [current billing settings](https://docs.github.com/en/billing/concepts/product-billing/github-actions). |
 | Codex interpretation and captions | Uses the existing ChatGPT subscription allowance; no paid OpenAI API key or automatic paid-model fallback. Generic filenames use no model. Subscription limits and reauthorization can interrupt AI work. |
 | Upload-Post (YouTube) | free plan, 10 uploads/month, no card |
 | Buffer | your existing plan; the API is included on all plans (free: 3,000 requests/30 days; we poll once per minute, ≤20 per post) |

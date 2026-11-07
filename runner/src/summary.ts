@@ -1,4 +1,4 @@
-// Private GitHub Actions run summary (Markdown). Everything is redacted and escaped; no raw provider output.
+// Redacted GitHub Actions run summary (Markdown). Public-repository summaries are public; no raw provider output.
 import { appendFileSync } from "node:fs";
 import { redact } from "../../src/shared/redact";
 import { STATUS_LABEL, type PublicationStatus } from "../../src/shared/status";

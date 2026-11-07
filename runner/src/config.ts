@@ -54,6 +54,7 @@ export const SECRET_NAMES = [
   "R2_SECRET_ACCESS_KEY",
   "CREDENTIALS_ENCRYPTION_KEY",
   "VIDEO_CODEX_AUTH_JSON",
+  "GITHUB_TOKEN",
 ] as const;
 
 export type SecretName = (typeof SECRET_NAMES)[number];

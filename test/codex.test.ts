@@ -2,17 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodexClient, CodexCredentialError, codexEnvironment, managedAuth, trustedCodexRunner } from '../runner/src/codex';
+import { CodexClient, CodexCredentialError, codexEnvironment, managedAuth, trustedCodexRunner, validRepository } from '../runner/src/codex';
 import { decrypt, encrypt } from '../runner/src/google';
 import { makeCaptions } from '../runner/src/captioner';
 
 const key=Buffer.alloc(32,7).toString('base64');
 const auth=(refresh='test-refresh-token')=>JSON.stringify({auth_mode:'chatgpt',OPENAI_API_KEY:null,last_refresh:'2026-11-07T10:00:00Z',tokens:{access_token:'test-access-token',refresh_token:refresh,id_token:'test-id-token'}});
 const trusted:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'TifahEfendijaM/Video-Publishing-Pipeline',GITHUB_REPOSITORY_ID:'1407843658',GITHUB_REPOSITORY_OWNER_ID:'50710040',GITHUB_REF:'refs/heads/main',GITHUB_EVENT_NAME:'workflow_dispatch',VIDEO_CODEX_REPOSITORY_PRIVATE:'true'};
+const repository={id:1407843658,full_name:'TifahEfendijaM/Video-Publishing-Pipeline',owner:{id:50710040},default_branch:'main',private:false};
 const temporary:string[]=[];
-afterEach(()=>{for(const dir of temporary.splice(0))rmSync(dir,{recursive:true,force:true});});
+afterEach(()=>{vi.unstubAllGlobals();for(const dir of temporary.splice(0))rmSync(dir,{recursive:true,force:true});});
 
 function fixture(body:string, initial:string|null=null) {
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json(repository)));
   const dir=mkdtempSync(join(tmpdir(),'fake-video-codex-'));temporary.push(dir);
   const executable=join(dir,'codex');
   writeFileSync(executable,`#!/usr/bin/env node\nconst fs=require('node:fs'),path=require('node:path');\nconst args=process.argv.slice(2),out=args[args.indexOf('--output-last-message')+1],authFile=path.join(process.env.CODEX_HOME,'auth.json');\nlet input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{${body}\n});\n`);
@@ -28,14 +30,24 @@ describe('subscription Codex execution',()=>{
     for(const value of ['{}','invalid',JSON.stringify({...JSON.parse(auth()),OPENAI_API_KEY:'api-key'}),JSON.stringify({...JSON.parse(auth()),auth_mode:'apikey'}),JSON.stringify({...JSON.parse(auth()),tokens:{access_token:'incomplete'}})])expect(()=>managedAuth(value)).toThrow(CodexCredentialError);
     expect(managedAuth(auth())).toBe(auth());
   });
-  it('rejects public, fork, PR and non-main jobs before loading credentials',async()=>{
+  it('rejects fork, PR, non-main and unknown-visibility jobs before loading credentials',async()=>{
     const f=fixture('');
-    for(const extra of [{VIDEO_CODEX_REPOSITORY_PRIVATE:'false'},{GITHUB_REPOSITORY_ID:'another-repo'},{GITHUB_REF:'refs/heads/untrusted'},{GITHUB_EVENT_NAME:'pull_request'},{GITHUB_ACTIONS:'false'}]){
+    for(const extra of [{VIDEO_CODEX_REPOSITORY_PRIVATE:''},{GITHUB_REPOSITORY_ID:'another-repo'},{GITHUB_REF:'refs/heads/untrusted'},{GITHUB_EVENT_NAME:'pull_request'},{GITHUB_ACTIONS:'false'}]){
       const client=new CodexClient({state:f.state,encryptionKey:key,seedAuth:auth(),env:{...trusted,...extra}});
       await expect(client.verify()).rejects.toThrow(CodexCredentialError);
     }
     expect(f.state.getCredential).not.toHaveBeenCalled();
     expect(()=>trustedCodexRunner(trusted)).not.toThrow();
+    expect(()=>trustedCodexRunner({...trusted,VIDEO_CODEX_REPOSITORY_PRIVATE:'false'})).not.toThrow();
+  });
+  it('accepts authorized public/private metadata and rejects renamed, transferred or unknown repositories',async()=>{
+    expect(validRepository(repository)).toBe(true);
+    expect(validRepository({...repository,private:true})).toBe(true);
+    for(const changed of [{id:7},{owner:{id:7}},{full_name:'someone/else'},{default_branch:'other'},{private:null}])expect(validRepository({...repository,...changed})).toBe(false);
+    const f=fixture('');
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({...repository,id:7})));
+    await expect(f.client.verify()).rejects.toThrow(/verify the exact video repository/);
+    expect(f.state.getCredential).not.toHaveBeenCalled();
   });
   it('uses isolated homes, removes provider/API secrets, and saves rotated credentials encrypted before returning',async()=>{
     const f=fixture(`

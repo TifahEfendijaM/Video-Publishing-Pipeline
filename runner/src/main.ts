@@ -658,6 +658,7 @@ async function cmdTools() {
     const video=target ? videos.find(v=>v.name.normalize('NFC')===target.normalize('NFC')) : videos.find(v=>v.name!==cfg.outros.defaultFileName);
     if(!video) throw new Error('Choose an exact video filename in the source folder');
     const captions=await captionsFor(video);
+    console.log(`Caption preview: source=${captions.source}; validated text only; no publishing or queue changes`);
     s.p(`Read-only caption preview for ${video.name}. Source: ${captions.source}. Nothing published or saved to the publishing plan.`);
     s.code(captions.caption).code(captions.youtubeTitle).code(captions.youtubeDescription);
     s.list(captions.notes);
@@ -668,6 +669,7 @@ async function cmdTools() {
     s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
   } else if (action === "plan_preview") {
     const interpreted = await interpretPlan(await flexiblePreview('plan',target),selectionModel());
+    console.log(JSON.stringify({preview:'plan',entries:interpreted.map(e=>({schedule:e.scheduleText,policy:e.policy,filenames:e.filenames,outros:e.outroNames??{}})),saved:false,published:false}));
     s.p('Interpreted plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving. A new every-N-days interval without a starting date uses the local save date; matching existing intervals keep their anchor.');
     s.table(['Timetable', 'Selection', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
   } else if (action === "rule_preview") {

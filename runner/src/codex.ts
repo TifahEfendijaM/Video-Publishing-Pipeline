@@ -34,9 +34,16 @@ export function trustedCodexRunner(env: NodeJS.ProcessEnv) {
       || env.GITHUB_REF !== 'refs/heads/main' || env.GITHUB_EVENT_NAME !== 'workflow_dispatch') {
     throw new CodexCredentialError('Subscription Codex runs only in this repository’s main-branch workflow_dispatch jobs');
   }
-  if (env.VIDEO_CODEX_REPOSITORY_PRIVATE !== 'true') {
-    throw new CodexCredentialError('Subscription Codex CI requires a private repository; no account credentials were loaded');
+  // Public visibility is explicitly authorized for this exact personal pipeline.
+  if (!['true', 'false'].includes(env.VIDEO_CODEX_REPOSITORY_PRIVATE ?? '')) {
+    throw new CodexCredentialError('Repository visibility is unknown; no account credentials were loaded');
   }
+}
+
+export function validRepository(value: unknown): boolean {
+  const repo = value as {id?:unknown;full_name?:unknown;owner?:{id?:unknown};default_branch?:unknown;private?:unknown} | null;
+  return !!repo && repo.id === 1407843658 && repo.full_name === 'TifahEfendijaM/Video-Publishing-Pipeline'
+    && repo.owner?.id === 50710040 && repo.default_branch === 'main' && typeof repo.private === 'boolean';
 }
 
 export function codexEnvironment(env: NodeJS.ProcessEnv, home: string, authDir: string): NodeJS.ProcessEnv {
@@ -62,8 +69,22 @@ export class CodexClient {
     catch { throw new CodexCredentialError('A valid 32-byte CREDENTIALS_ENCRYPTION_KEY is required before using Codex'); }
   }
 
+  private async verifyRepository(): Promise<void> {
+    const env = this.options.env ?? process.env;
+    trustedCodexRunner(env);
+    try {
+      const response = await fetch('https://api.github.com/repos/TifahEfendijaM/Video-Publishing-Pipeline', {
+        headers: {accept:'application/vnd.github+json', ...(env.GITHUB_TOKEN ? {authorization:`Bearer ${env.GITHUB_TOKEN}`} : {})},
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok || !validRepository(await response.json())) throw new Error();
+    } catch {
+      throw new CodexCredentialError('Could not verify the exact video repository, owner and default branch; Codex was stopped');
+    }
+  }
+
   private async auth(): Promise<string> {
-    trustedCodexRunner(this.options.env ?? process.env);
+    await this.verifyRepository();
     try {
       const stored = (await this.options.state.getCredential(CREDENTIAL)).credential;
       return managedAuth(stored ? decrypt(this.options.encryptionKey, stored.ciphertext) : this.options.seedAuth ?? '');
@@ -117,6 +138,7 @@ export class CodexClient {
       } finally {
         // Refresh can happen even on a failed/timed-out request. Persist before returning or falling back.
         try {
+          await this.verifyRepository();
           const updated = managedAuth(readFileSync(authFile, 'utf8'));
           const ciphertext = encrypt(this.options.encryptionKey, updated);
           await this.options.state.putCredential(CREDENTIAL, ciphertext);

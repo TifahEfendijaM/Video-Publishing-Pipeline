@@ -18,7 +18,7 @@ for natural-language interpretation and English captions/titles. There is no sep
 paid AI API key. Formatted entries skip AI. Account limits and occasional reauthorization still apply.
 Relative dates use input-preparation time in Sarajevo, and new past one-time uploads are rejected.
 Dated uploads use `Once on 2026-11-07 at 21:00: custom: "Video.mp4"`.
-The subscription workflow requires a **private repository**; see the activation procedure below.
+The user-authorized public workflow uses exact-repository/main-branch guards and private credential storage; see the activation procedure below.
 
 You can also pair each timetable with its rule in
 one text field, for example `Mon and Wed 06:00: lifo | every two days at 18:00: random`. Day intervals keep a saved start-date anchor and Sarajevo wall-clock time across daylight-saving changes. Ordered Custom lists and
@@ -39,7 +39,7 @@ Cloudflare Worker (cron * * * * *, UTC)            GitHub Actions (ubuntu runner
 - **Use it:** [docs/OPERATING.md](docs/OPERATING.md) — the form fields, schedule syntax, tools, failure handling.
 - **Set it up:** [docs/SETUP.md](docs/SETUP.md) — accounts, scopes, secrets, deployment, costs.
 - **What each platform allows:** [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
-- **Codex setup:** [docs/CODEX_CLI.md](docs/CODEX_CLI.md) — private repository, dedicated sign-in, activation and limits.
+- **Codex setup:** [docs/CODEX_CLI.md](docs/CODEX_CLI.md) — authorized public execution, dedicated sign-in, activation and limits.
 
 ## Development
 

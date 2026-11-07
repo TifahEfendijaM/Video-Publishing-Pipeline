@@ -200,8 +200,9 @@ Weekly, every-N-days recurring, or dated one-time, Europe/Sarajevo time (summer/
 | `status` | Saved plan, paused/running state, full remaining Custom lists, defaults, next times, recent runs and open publications | no |
 | `manual_preview` | Validate one-off video/outro text in `target` without changing settings or publishing | no |
 | `plan_preview` | Interpret paired timetables/rules in `target` without saving or publishing | no |
-| `verify` | Checks every account identity, permission, folder, Buffer schema, temporary-hosting privacy, free caption model, Worker target | no |
-| `preview` | Read-only selection + media/format plan + captions + Story renders (artifact). `target` = optional filename | no |
+| `verify` | Checks account identities, permissions, folder, Buffer schema, temporary-hosting privacy, dedicated Codex sign-in and Worker target; does not call Codex | no |
+| `preview` | Read-only selection + media/format plan + captions + Story renders. Artifacts are uploaded only when the repository is private. `target` = optional filename | no |
+| `caption_preview` | Generate and validate captions/title for the exact filename in `target`; no media upload, settings or queue changes | no |
 | `dispatch_test` | Worker dispatches the scheduled workflow in non-publishing verification mode | no |
 | `publishing_enable` / `publishing_disable` | Global kill switch (checked right before every publication) | — |
 | `reconcile` | Re-reads provider status and retries Drive cleanup of confirmed sources; never re-sends | no |
@@ -263,7 +264,7 @@ cutting anything:
 | Longer than 3 min | original file | none (Shorts max 3 min) — reported, nothing is cut |
 
 The shape is read from each file with ffprobe, so mixed folders work. The `preview` tool attaches both
-versions as a private artifact. Note: posting the same clip twice on one channel is your explicit choice;
+versions as an artifact only when the repository is private; public runs retain the text summary without uploading preview media. Note: posting the same clip twice on one channel is your explicit choice;
 YouTube may treat near-duplicate uploads as repetitive content, so keep an eye on channel feedback.
 Upload-Post's free plan (10/month) is used only for the regular video.
 
