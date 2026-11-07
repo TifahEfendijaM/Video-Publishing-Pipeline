@@ -9,8 +9,8 @@ Google Drive plugins. The task runs in ChatGPT's cloud on the user's subscriptio
 
 - Source folder: `1URObW4ZZtviogsPodnU24mzc2x2eExev` (EasyBosnian educational videos).
 - Result Google Doc: `1NA6Yfv7fkokSkaWuPuSbqt7MSh-5dEaurvwetbNUUKM`.
-- The user-owned request inbox is JSON file `11rU9giFsQBDrE1Sc2cPEqRlUtFYucl02`, named
-  `easybosnian-ai-request-inbox.json`, directly in that folder. An empty inbox is `{"schemaVersion":1}`.
+- The user-owned request inbox is a plain-text file containing JSON, `1qAG3_UCPn56gnYYAKEEDwArCRWDZfaWl`, named
+  `easybosnian-ai-request-inbox.txt`, directly in that folder. An empty inbox is `{"schemaVersion":1}`.
 - Never copy filenames, request contents or caption results into this public GitHub repository.
 - Only write the result Google Doc. Read other files only as specified below. Do not download videos.
 
