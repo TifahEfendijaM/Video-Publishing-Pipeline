@@ -9,7 +9,8 @@ Google Drive plugins. The task runs in ChatGPT's cloud on the user's subscriptio
 
 - Source folder: `1URObW4ZZtviogsPodnU24mzc2x2eExev` (EasyBosnian educational videos).
 - Result Google Doc: `1NA6Yfv7fkokSkaWuPuSbqt7MSh-5dEaurvwetbNUUKM`.
-- Pending requests are raw JSON files directly in that folder, named `easybosnian-ai-request-<id>.json`.
+- The user-owned request inbox is JSON file `11rU9giFsQBDrE1Sc2cPEqRlUtFYucl02`, named
+  `easybosnian-ai-request-inbox.json`, directly in that folder. An empty inbox is `{"schemaVersion":1}`.
 - Never copy filenames, request contents or caption results into this public GitHub repository.
 - Only write the result Google Doc. Read other files only as specified below. Do not download videos.
 
@@ -53,10 +54,12 @@ duplicate a file ID or request ID. Keep at most 1000 captions and the 100 most r
 1. List direct children of the source folder. Paginate where the tool supports it; otherwise process
    only the files actually returned and report that coverage is partial. Do not claim to have checked
    files you have not listed. Do not traverse Published videos or any other subfolder.
-2. Read pending request JSON files, up to 10 per run, oldest first. Process these before caption work.
+2. Read the request inbox by its exact ID. If it has no `id`, there is no pending request. Process a
+   pending request before caption work. Never write, clear or rename the inbox.
    A request has `schemaVersion`, `id`, `digest`, `kind` (`plan`, `manual` or `rule`), `text`,
    `referenceTime`, `expiresAt`, `timeZone` (Europe/Sarajevo), and optional `savedPlan` for context.
-   Ignore expired requests and IDs already in the result Doc. Never modify request files.
+   Ignore expired requests and IDs already in the result Doc. GitHub serializes natural-language
+   preparation jobs, so there is at most one pending request in the inbox at a time.
 3. Interpret the complete request as described below. Copy its ID and digest verbatim; do not compute
    a new digest. Add one response to the Doc. A ready response has a nonblank normalized string. An
    unclear or unsupported request has `status: "needs_clarification"`, `normalized: null`, and a concise
@@ -102,6 +105,8 @@ optional semicolon-separated outro clauses. A plan Edit replaces the WHOLE saved
 that explicitly add/change/retain part of `savedPlan`, output the full resulting plan, preserving the
 other entries and original unchanged Custom lists. For an explicit replacement, output only the
 requested replacement. Never remove existing entries merely because an additive request omitted them.
+Unchanged Custom lists in `savedPlan` may include already archived filenames; preserve them verbatim
+without requiring those old files to remain in the source folder. Newly selected files must exist.
 If replacement versus addition is unclear and would change existing entries, request clarification.
 
 Schedules support weekly weekdays/times, every 1-365 calendar days, and dated one-time events.
