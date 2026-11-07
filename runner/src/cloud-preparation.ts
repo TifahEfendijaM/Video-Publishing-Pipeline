@@ -12,7 +12,7 @@ export type InterpretationKind='plan'|'manual'|'rule';
 export const noModel:CaptionModel={model:'deterministic validation',run:async()=>{throw new Error('This request requires cloud ChatGPT interpretation');}};
 
 export function parsePreparation(text:string):Preparation {
-  const parsed=Prepared.parse(JSON.parse(text.replace(/^\uFEFF/,'')));
+  const parsed=Prepared.parse(JSON.parse(text.trim().replace(/^\uFEFF/,'')));
   if(new Set(parsed.captions.map(c=>c.fileId)).size!==parsed.captions.length || new Set(parsed.responses.map(r=>r.requestId)).size!==parsed.responses.length) throw new Error('Duplicate preparation records');
   return parsed;
 }
@@ -59,7 +59,10 @@ export async function flexibleInterpretation(kind:InterpretationKind,text:string
   const now=options.now??Date.now;
   const sleep=options.sleep??(ms=>new Promise(resolve=>setTimeout(resolve,ms)));
   // Fail before writing a request if preparation is not configured/readable.
-  parsePreparation(await drive.preparationText(documentId));
+  for(let attempt=0;;attempt++) {
+    try {parsePreparation(await drive.preparationText(documentId));break;}
+    catch(e) {if(attempt===2) throw e;await sleep(2000);}
+  }
   const payload=requestPayload(kind,text,now(),options.savedPlan);
   const fileId=await drive.createPreparationRequest(payload.id,payload);
   options.onWaiting?.();

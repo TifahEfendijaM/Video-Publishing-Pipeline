@@ -11,6 +11,7 @@ const output={topic_caption:'You can bring a little Bosnian into your next coffe
 describe('subscription-based cloud preparation',()=>{
  it('accepts a Google export BOM and rejects duplicate records and malformed transport',()=>{
    expect(parsePreparation('\uFEFF'+JSON.stringify(empty()))).toEqual(empty());
+   expect(parsePreparation(JSON.stringify(empty())+'\n\uFEFF')).toEqual(empty());
    const caption={fileId:'video_source_12345',fileName:'Coffee.mp4',output};
    expect(()=>parsePreparation(JSON.stringify({...empty(),captions:[caption,caption]}))).toThrow(/Duplicate/);
    expect(()=>parsePreparation('```json\n{}\n```')).toThrow();

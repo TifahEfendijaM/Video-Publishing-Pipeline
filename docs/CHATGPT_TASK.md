@@ -1,5 +1,9 @@
 # Cloud ChatGPT preparation protocol (version 1)
 
+This procedure is also pinned in the cloud task's prompt so cached search excerpts or earlier chat
+context cannot redirect it to an obsolete inbox. Keep that prompt aligned when changing this protocol.
+An empty inbox with no `id` means no pending request, not a missing-fields error.
+
 This is a preparation-only task. GitHub Actions and the Cloudflare Worker retain all scheduling,
 validation, file reservations, publication and recovery responsibilities. Do not call any AI API,
 publish videos, change schedules, or change credentials or sharing. Use the existing GitHub and
@@ -64,6 +68,7 @@ duplicate a file ID or request ID. Keep at most 1000 captions and the 100 most r
    a new digest. Add one response to the Doc. A ready response has a nonblank normalized string. An
    unclear or unsupported request has `status: "needs_clarification"`, `normalized: null`, and a concise
    explanation identifying the missing information. Never guess missing times, filenames or ordering.
+   Persist a pending response immediately with an atomic revision-guarded update before caption work.
 4. Prepare captions for up to 10 unprepared/renamed videos per run. Prioritize filenames requested
    in pending requests, then the newest videos by Drive createdTime, then other remaining videos.
    Match records by BOTH file ID and exact current filename. Skip outro assets (names containing
