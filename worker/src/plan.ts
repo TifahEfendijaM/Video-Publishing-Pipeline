@@ -2,7 +2,7 @@ import { HttpError, randomToken, type Db, type Outros } from './logic';
 import { listJobs } from './jobs';
 import { planState, setPlanPaused } from './plan-state';
 import { selectionKey, validatePlanEntries, type PlanEntryInput } from '../../src/shared/publishing-plan';
-import { parseTimetable, formatTimetable, anchorTimetable } from '../../src/shared/timetable';
+import { parseTimetable, formatTimetable, anchorTimetable, nextTimetable } from '../../src/shared/timetable';
 
 export interface PlanChange {
   action: 'edit' | 'pause' | 'resume';
@@ -34,6 +34,13 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
   catch(e) { throw new HttpError(400, (e as Error).message); }
   if (request.outros && Object.keys(request.outros).length) throw new HttpError(400, 'Specify outros inside each timetable entry; universal scheduled outro changes are retired');
   if (entries === undefined) return planView(db, nowMs);
+  for(const entry of entries) {
+    const timetable=parseTimetable(entry.scheduleText)!;
+    if(!Array.isArray(timetable) && timetable.kind==='once' && !nextTimetable(timetable,nowMs,1).length &&
+       !old.some(j=>j.scheduleText===entry.scheduleText && selectionKey({...j,custom:j.originalCustom})===selectionKey(entry))) {
+      throw new HttpError(400,'The requested one-time upload is already in the past; choose a future date/time');
+    }
+  }
   const at = new Date(nowMs).toISOString();
   const planOutros = JSON.parse(meta.outros_json);
   const used = new Set<string>();

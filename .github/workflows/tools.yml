@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ (inputs.action == 'retry_failed' || inputs.action == 'reconcile' || inputs.action == 'resolve_publication') && 'easybosnian-publishing' || format('tools-{0}', github.run_id) }}
+  group: ${{ (inputs.action == 'retry_failed' || inputs.action == 'reconcile' || inputs.action == 'resolve_publication') && 'easybosnian-publishing' || (inputs.action == 'plan_preview' || inputs.action == 'manual_preview') && 'easybosnian-ai-preparation' || format('tools-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:

@@ -131,7 +131,7 @@ export async function makeCaptions(filename: string, m: CaptionModel): Promise<C
       feedback = errs.join("; ");
       notes.push(`Caption attempt ${attempt} rejected: ${feedback}`);
     } catch (e) {
-      notes.push(`Caption generation error (nothing is charged on the free plan; the daily free allowance may be used up): ${summarizeError(e, 200)}`);
+      notes.push(`Caption preparation/generation error (nothing is charged by this fallback): ${summarizeError(e, 200)}`);
       break;
     }
   }

@@ -102,7 +102,7 @@ export const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"];
 
 export class Drive {
   private archiveFolderId?: string;
-  constructor(private token: string, private folderId: string, private archiveOptions: { folderId?: string; folderName?: string } = {}) {}
+  constructor(private token: string, private folderId: string, private archiveOptions: { folderId?: string; folderName?: string } = {}, private requestInboxId?:string) {}
 
   private async metadata(fileId: string): Promise<any> {
     return json(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,trashed,parents,capabilities(canAddChildren,canMoveItemWithinDrive)&supportsAllDrives=true`, { label: "drive archive metadata", headers: this.h() });
@@ -146,6 +146,44 @@ export class Drive {
   async folder(): Promise<{ id: string; name: string; mimeType: string }> {
     const u = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(this.folderId)}?fields=id,name,mimeType&supportsAllDrives=true`;
     return json(u, { label: "drive folder", headers: this.h() });
+  }
+
+  /** Private machine-readable handoff; no video bytes or public repository writes. */
+  async preparationText(documentId: string): Promise<string> {
+    const meta=await this.metadata(documentId);
+    if(meta.trashed || meta.mimeType!=='application/vnd.google-apps.document' || !meta.parents?.includes(this.folderId)) throw new Error('ChatGPT preparation Doc must be directly in the source folder');
+    const res=await request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(documentId)}/export?mimeType=text%2Fplain`,{label:'Drive ChatGPT preparation',headers:this.h(),timeoutMs:30000});
+    if(!res.ok) throw new HttpStatusError(res.status,'Could not read the preparation Doc','Drive ChatGPT preparation');
+    const text=await res.text();
+    if(Buffer.byteLength(text)>2000000) throw new Error('ChatGPT preparation Doc exceeds 2 MB');
+    return text;
+  }
+
+  async createPreparationRequest(id: string, payload: unknown): Promise<string> {
+    if(!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid preparation request ID');
+    const existing=await this.requestInbox();
+    if(existing.id && (!Number.isFinite(Date.parse(existing.expiresAt)) || Date.parse(existing.expiresAt)>Date.now())) throw new Error('Another natural-language request is pending in the private inbox; wait for it to finish or expire');
+    await this.writeRequestInbox(payload);
+    return this.requestInboxId!;
+  }
+
+  async clearPreparationRequest(fileId:string,id:string):Promise<void> {
+    if(fileId!==this.requestInboxId) throw new Error('Refusing to clear an unrelated file');
+    const existing=await this.requestInbox();
+    if(existing.id===id) await this.writeRequestInbox({schemaVersion:1});
+  }
+
+  private async requestInbox():Promise<any> {
+    if(!this.requestInboxId) throw new Error('ChatGPT request inbox is not configured');
+    const meta=await this.metadata(this.requestInboxId);
+    if(meta.trashed || meta.name!=='easybosnian-ai-request-inbox.txt' || meta.mimeType!=='text/plain' || !meta.parents?.includes(this.folderId)) throw new Error('ChatGPT request inbox must be the configured text file directly in the source folder');
+    const res=await request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(this.requestInboxId)}?alt=media&supportsAllDrives=true`,{label:'Drive private request inbox',headers:this.h(),timeoutMs:30000});
+    if(!res.ok) throw new HttpStatusError(res.status,'Could not read the request inbox','Drive private request inbox');
+    return JSON.parse((await res.text()).replace(/^\uFEFF/,''));
+  }
+
+  private async writeRequestInbox(payload:unknown):Promise<void> {
+    await json(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(this.requestInboxId!)}?uploadType=media&fields=id&supportsAllDrives=true`,{label:'Drive update user-owned request inbox',method:'PATCH',headers:{...this.h(),'content-type':'text/plain; charset=UTF-8'},body:JSON.stringify(payload)});
   }
 
   /** Lists videos directly in the folder. Throws on any auth/network error — never returns an empty list on failure. */
