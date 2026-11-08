@@ -176,3 +176,12 @@ needed: weekly schedule JSON remains compatible, while new every-N-days entries 
 recurrence object. The new plan-edit API route fails closed until the Worker supports that object.
 Verify the plan read-back and scheduler dispatch before restoring the previous publishing switch.
 Do not create an example publishing plan as an activation test.
+
+
+## Destination-aware publishing update
+
+Deploy the updated scheduler through **Deploy scheduler Worker** after merging. Migration
+`0006_destinations.sql` adds per-entry destination storage; existing jobs default to all destinations
+without changing their remaining lists, reservations, times or versions. No new accounts, tokens or
+paid services are needed. New runners refuse to save plans against an older Worker that cannot retain
+these choices. Manual selection is run-local; scheduled choices are read from the current saved job.

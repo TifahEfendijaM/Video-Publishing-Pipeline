@@ -2,7 +2,7 @@
 
 Publishes one video at a time from the Google Drive folder **EasyBosnian educational videos** to
 Instagram (Reel + Story), Facebook (Reel or Page video + Story), TikTok (video post via Buffer) and
-YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), using one editable Europe/Sarajevo publishing plan or on demand.
+YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), using one editable Europe/Sarajevo publishing plan or on demand. Manual entries and individual scheduled rules can choose platforms and YouTube formats in natural language; omitted choices publish everywhere.
 Separate from the image-card pipeline: no shared code, Worker, database or credentials.
 
 The source Drive folder is the publishing queue: confirmed sources move into **Published videos**,

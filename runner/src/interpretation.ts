@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
-import { interpretPlan, interpretManualEntry, interpretSelection } from './publishing-plan';
+import { interpretPlan, interpretManualEntry, interpretRuleEntry } from './publishing-plan';
 import type { CaptionModel } from './captioner';
 
 export type InterpretationKind = 'plan' | 'manual' | 'rule';
@@ -16,7 +16,7 @@ export async function validateNormalized(kind: InterpretationKind, text: string)
   if (!text.trim()) throw new Error('AI returned an empty interpretation');
   if (kind === 'plan') await interpretPlan(text, noModel);
   else if (kind === 'manual') await interpretManualEntry(text, noModel);
-  else await interpretSelection(text, noModel);
+  else await interpretRuleEntry(text, noModel);
 }
 
 export interface InterpretationContext { savedPlan: string; filenames: string[]; referenceTime: string }

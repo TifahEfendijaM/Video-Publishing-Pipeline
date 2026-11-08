@@ -1,6 +1,7 @@
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
-import { interpretPlan, interpretManualEntry, interpretSelection, resolveManualEntry, resolvePlan } from "./publishing-plan";
+import { interpretPlan, interpretManualEntry, interpretRuleEntry, resolveManualEntry, resolvePlan } from "./publishing-plan";
+import { destinationClause, destinationDescription, taskDestination, validateDestinations, type Destination } from '../../src/shared/destinations';
 import { flexibleInterpretation, noModel, writeWorkflowOutput, INTERPRETATION_SCHEMA, type InterpretationKind } from './interpretation';
 import { CodexClient, CodexCredentialError } from './codex';
 // GitHub Actions runner entry point.
@@ -59,7 +60,7 @@ async function captionsFor(video:{id:string;name:string}) {
 async function normalizeInput(kind:InterpretationKind,text:string,saved:Awaited<ReturnType<StateClient['plan']>>) {
   if(cfg.captions.provider!=='codex_cli' || !text.trim()) return text;
   const referenceTime=new Date().toISOString();
-  const savedPlan=saved.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}`).join(' | ');
+  const savedPlan=saved.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}${destinationClause(j.destinations)}`).join(' | ');
   return flexibleInterpretation(kind,text,{model:'Codex CLI',run:(system,user)=>codexClient().run(system,user,INTERPRETATION_SCHEMA,cfg.captions.model)},async()=>({savedPlan,referenceTime,filenames:(await (await drive()).listVideos()).map(v=>v.name)}));
 }
 
@@ -143,16 +144,17 @@ async function recoverArchived(d: Drive, state: StateClient, s: Summary) {
   if (count) s.p(`Cleared recovery checkpoints for ${count} source(s) already in Published videos.`);
 }
 
-async function providers(state: StateClient): Promise<Providers> {
+async function providers(state: StateClient, destinations?: Destination[]): Promise<Providers> {
+  const selected = validateDestinations(destinations);
   const p: Providers = {};
   const metaToken = sec("META_PAGE_ACCESS_TOKEN");
-  if (metaToken) p.meta = new Meta(metaToken, cfg.meta.graphVersion, cfg.polling.metaMaxMinutes);
+  if (metaToken && selected.some(d => d.startsWith('instagram/') || d.startsWith('facebook/'))) p.meta = new Meta(metaToken, cfg.meta.graphVersion, cfg.polling.metaMaxMinutes);
   const bufferKey = sec("BUFFER_API_KEY");
-  if (bufferKey) p.buffer = new Buffer(bufferKey, cfg.polling.bufferMaxMinutes);
+  if (bufferKey && (selected.includes('tiktok/feed') || selected.includes('youtube/short'))) p.buffer = new Buffer(bufferKey, cfg.polling.bufferMaxMinutes);
   const upKey = sec("UPLOAD_POST_API_KEY");
-  if (upKey) p.uploadPost = new UploadPost(upKey, cfg.destinations.youtube.regular.uploadPostProfile, cfg.polling.uploadPostMaxMinutes);
+  if (upKey && selected.includes('youtube/video')) p.uploadPost = new UploadPost(upKey, cfg.destinations.youtube.regular.uploadPostProfile, cfg.polling.uploadPostMaxMinutes);
   const [id, secret, refresh] = [sec("YOUTUBE_CLIENT_ID"), sec("YOUTUBE_CLIENT_SECRET"), sec("YOUTUBE_REFRESH_TOKEN")];
-  if (id && secret && refresh) {
+  if (id && secret && refresh && selected.includes('youtube/video')) {
     const t = await oauthAccessToken({ clientId: id, clientSecret: secret, refreshToken: refresh, encryptionKey: sec("CREDENTIALS_ENCRYPTION_KEY"), state, credentialName: "youtube_refresh_token" });
     p.youtube = new YouTube(t.accessToken, cfg.polling.youtubeMaxMinutes);
     p.youtubeScopes = t.scopes;
@@ -160,14 +162,15 @@ async function providers(state: StateClient): Promise<Providers> {
   return p;
 }
 
-async function identities(p: Providers): Promise<Identities> {
+async function identities(p: Providers, destinations?: Destination[]): Promise<Identities> {
+  const selected = validateDestinations(destinations);
   const d = cfg.destinations;
   const missing = (what: string) => ({ ok: false, detail: `${what} not configured` });
   const facebook = p.meta ? await p.meta.verifyFacebook(d.facebook.expectedPageId, d.facebook.expectedPageName) : missing("META_PAGE_ACCESS_TOKEN");
-  const instagram = p.meta && facebook.ok ? await p.meta.verifyInstagram(d.facebook.expectedPageId, d.instagram.expectedUserId, d.instagram.expectedUsername) : p.meta ? { ok: false, detail: "Facebook Page not verified, so its linked Instagram cannot be verified" } : missing("META_PAGE_ACCESS_TOKEN");
-  const tiktok = p.buffer ? await p.buffer.verifyChannel(d.tiktok.expectedBufferChannelId, "tiktok", d.tiktok.expectedUsername) : missing("BUFFER_API_KEY");
+  const instagram = p.meta && facebook.ok && selected.some(d => d.startsWith('instagram/')) ? await p.meta.verifyInstagram(d.facebook.expectedPageId, d.instagram.expectedUserId, d.instagram.expectedUsername) : p.meta ? { ok: false, detail: "Instagram not selected or Facebook Page not verified" } : missing("META_PAGE_ACCESS_TOKEN");
+  const tiktok = p.buffer && selected.includes('tiktok/feed') ? await p.buffer.verifyChannel(d.tiktok.expectedBufferChannelId, "tiktok", d.tiktok.expectedUsername) : missing("BUFFER_API_KEY");
   const youtube = p.youtube ? await p.youtube.verify(d.youtube.expectedChannelId, d.youtube.expectedChannelHandle, p.youtubeScopes ?? []) : missing("YouTube OAuth credentials");
-  const youtubeBuffer = p.buffer && d.youtube.short.bufferChannelId ? await p.buffer.verifyChannel(d.youtube.short.bufferChannelId, "youtube", null) : { ok: false, detail: "no YouTube channel connected in Buffer (youtube.short.bufferChannelId empty)" };
+  const youtubeBuffer = p.buffer && d.youtube.short.bufferChannelId && selected.includes('youtube/short') ? await p.buffer.verifyChannel(d.youtube.short.bufferChannelId, "youtube", null) : { ok: false, detail: "YouTube Short not selected or no YouTube channel connected in Buffer" };
   const youtubeUploadPost = p.uploadPost ? await p.uploadPost.verify(d.youtube.expectedChannelHandle) : missing("UPLOAD_POST_API_KEY");
   return { instagram, facebook, tiktok, youtube, youtubeBuffer, youtubeUploadPost };
 }
@@ -215,6 +218,7 @@ interface PublishOpts {
   titleRule?: TitleRule | null;
   /** manual_now outro choices for this run only (platform -> clip, or null = no outro); not saved */
   outroOverrides?: Record<string, { fileId: string; fileName: string } | null>;
+  destinations?: Destination[];
   summary: Summary;
   state: StateClient;
 }
@@ -238,6 +242,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     o.pendingCustom = fresh.remaining[0] ?? null;
     o.policy = fresh.titleRule?.order ?? (fresh.policy === "custom" ? "fifo" : fresh.policy as SelectionPolicy);
   }
+  const destinations = validateDestinations(o.job?.destinations ?? o.destinations);
   const reservedIds = new Set(jobs.flatMap((j) => j.remaining.map((v) => v.fileId)));
   if (o.job?.remaining[0]) reservedIds.delete(o.job.remaining[0].fileId);
   const savedOutros: Record<string, { fileId: string; fileName: string } | null> = (await o.state.state()).settings.outros ?? {};
@@ -261,6 +266,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   s.h(2, "Video selection");
   s.kv([
     ["Plan timetable", o.job?.scheduleText ?? "one-off"],
+    ["Destinations", destinationDescription(destinations)],
     ["Method", sel.method === "custom" ? "custom (one-run override)" : sel.method.toUpperCase()],
     ["Fallback", sel.fallback ?? "none"],
     ["Eligible videos remaining in the folder", sel.eligibleCount],
@@ -292,6 +298,8 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     for (const plat of ["youtube", "tiktok", "instagram", "facebook"] as const) {
       const ou = outros[plat];
       bases[plat] = { path: original, info, outro: null };
+      const needsFeed = plat === 'youtube' ? destinations.some(d => d.startsWith('youtube/')) : destinations.includes(plat === 'instagram' ? 'instagram/reel' : `${plat}/feed`);
+      if (!needsFeed) continue;
       if (!ou) continue;
       if (ou.fileId === v.id) {
         outroNotes.push(`${plat}: the selected video is itself the ${plat} outro, so no outro is appended.`);
@@ -320,7 +328,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       youtube: planFeed(bases.youtube.info).youtube,
     };
     const ytPlan = planYouTubeVersions(bases.youtube.info);
-    const storyPlan = planStory(info, cfg.stories.longVideoPolicy);
+    const storyPlan = destinations.some(d => d === 'instagram/story' || d === 'facebook/story') ? planStory(info, cfg.stories.longVideoPolicy) : { kind: 'none' as const, reason: 'Stories not selected for this entry' };
     s.h(2, "Media");
     s.kv([
       ["Duration", `${info.durationSec.toFixed(2)} s`],
@@ -329,11 +337,11 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       ["Audio", info.audioCodec ? `${info.audioCodec} ${info.audioSampleRate ?? ""} Hz` : "none"],
       ["Size", `${(info.sizeBytes / 1024 / 1024).toFixed(2)} MB`],
       ["Outros", (["youtube", "tiktok", "instagram", "facebook"] as const).map((p) => `${p}: ${bases[p].outro ? `${bases[p].outro} appended (${bases[p].info.durationSec.toFixed(1)} s total)` : "none"}`).join("\n")],
-      ["Instagram", `Reel${feed.instagram.check.ok ? "" : ` — incompatible: ${feed.instagram.check.problems.join("; ")}`}`],
-      ["Facebook", feed.facebook.reason],
-      ["TikTok", feed.tiktok.check.ok ? "video post" : `incompatible: ${feed.tiktok.check.problems.join("; ")}`],
-      ["YouTube Short", ytPlan.short.reason],
-      ["YouTube regular video", ytPlan.regular.reason],
+      ["Instagram", destinations.includes('instagram/reel') ? `Reel${feed.instagram.check.ok ? "" : ` — incompatible: ${feed.instagram.check.problems.join("; ")}`}` : "Reel not selected"],
+      ["Facebook", destinations.includes('facebook/feed') ? feed.facebook.reason : "Feed not selected"],
+      ["TikTok", !destinations.includes('tiktok/feed') ? "Not selected" : feed.tiktok.check.ok ? "video post" : `incompatible: ${feed.tiktok.check.problems.join("; ")}`],
+      ["YouTube Short", destinations.includes('youtube/short') ? ytPlan.short.reason : 'Not selected'],
+      ["YouTube regular video", destinations.includes('youtube/video') ? ytPlan.regular.reason : 'Not selected'],
       ["Stories", storyPlan.kind === "single" ? (storyPlan.needsRendition ? `Story rendition: ${storyPlan.renditionReason}` : "original file used") : storyPlan.kind === "segmented" ? storyPlan.renditionReason : storyPlan.reason],
     ]);
     if (outroNotes.length) s.list(outroNotes);
@@ -352,11 +360,11 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     }
     const youtube = { plan: ytPlan, shortPath: null as string | null, regularPath: null as string | null };
     if (cfg.destinations.youtube.enabled) {
-      if (cfg.destinations.youtube.short.enabled && ytPlan.short.kind === "vertical_canvas") {
+      if (destinations.includes('youtube/short') && cfg.destinations.youtube.short.enabled && ytPlan.short.kind === "vertical_canvas") {
         youtube.shortPath = join(work, "youtube_short.mp4");
         await renderCanvas(bases.youtube.path, youtube.shortPath, bases.youtube.info, { width: 1080, height: 1920 });
       }
-      if (cfg.destinations.youtube.regular.enabled && ytPlan.regular.kind === "widescreen_canvas") {
+      if (destinations.includes('youtube/video') && cfg.destinations.youtube.regular.enabled && ytPlan.regular.kind === "widescreen_canvas") {
         youtube.regularPath = join(work, "youtube_video.mp4");
         await renderWidescreen(bases.youtube.path, youtube.regularPath, bases.youtube.info);
       }
@@ -382,12 +390,13 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     s.p("YouTube title:").code(captions.youtubeTitle);
     s.p("YouTube description:").code(captions.youtubeDescription);
 
-    const prov = await providers(o.state);
-    const ids = await identities(prov);
+    const prov = await providers(o.state, destinations);
+    const ids = await identities(prov, destinations);
     s.h(2, "Destination identity checks");
-    s.table(["Destination", "Verified", "Detail"], Object.entries(ids).map(([k, c]) => [k, c.ok ? "✅" : "❌", c.detail]));
+    const identitySelected = (key: string) => key === 'youtubeBuffer' ? destinations.includes('youtube/short') : key.startsWith('youtube') ? destinations.includes('youtube/video') : destinations.some(d => d.startsWith(`${key}/`));
+    s.table(["Destination", "Verified", "Detail"], Object.entries(ids).filter(([k]) => identitySelected(k)).map(([k, c]) => [k, c.ok ? "✅" : "❌", c.detail]));
 
-    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube, feedPaths: { instagram: bases.instagram.path, facebook: bases.facebook.path, tiktok: bases.tiktok.path } });
+    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube, destinations, feedPaths: { instagram: bases.instagram.path, facebook: bases.facebook.path, tiktok: bases.tiktok.path } });
     if (o.filter) tasks = tasks.filter((t) => o.filter!.has(`${t.platform}:${t.surface}`));
 
     if (o.preview) {
@@ -483,6 +492,7 @@ async function cmdConfigure() {
         pendingCustom,
         titleRule: resolved.titleRule,
         outroOverrides,
+        destinations: resolved.destinations,
         summary: s,
         state,
       });
@@ -505,6 +515,7 @@ async function cmdConfigure() {
   if (action === 'edit') {
     const interpreted = planText ? await interpretPlan(planText, model) : undefined;
     const entries = interpreted ? resolvePlan(interpreted, interpreted.some(e => e.policy === 'custom' || Object.values(e.outroNames ?? {}).some(name => name !== null)) ? await (await drive()).listVideos() : [], saved.entries) : undefined;
+    if (entries && !saved.features?.destinationSelection) throw new Error('Deploy the updated scheduler Worker before editing destination choices; no plan changes saved');
     await state.changePlan({ action, entries, expectedRevision: saved.revision });
     s.p(planText ? 'Updated the publishing plan. Nothing was published now. Unchanged Custom lists retain their progress.' : 'Plan text left blank: retained the saved timetable/rule pairs and Custom progress.');
   } else {
@@ -533,9 +544,9 @@ async function reportPlan(s: Summary, state: StateClient) {
   s.h(2, 'Publishing plan');
   s.p(plan.paused ? 'PAUSED — rules and remaining Custom lists are retained.' : 'Plan scheduling is enabled; only configured future slots can run.');
   if (!plan.entries.length) { s.p('No plan configured. Use Edit and enter paired timetables and selection rules.'); return; }
-  s.table(['Timetable (Europe/Sarajevo)', 'Selection', 'Outros', 'Status', 'Next occurrence'], plan.entries.map(j=>[j.scheduleText,selectionDescription(j),outroDescription(j.outros).replace(/^; /,'') || 'default (outro)',j.status,j.nextOccurrences[0]?.local ?? 'none']));
+  s.table(['Timetable (Europe/Sarajevo)', 'Selection', 'Destinations', 'Outros', 'Status', 'Next occurrence'], plan.entries.map(j=>[j.scheduleText,selectionDescription(j),destinationDescription(j.destinations),outroDescription(j.outros).replace(/^; /,'') || 'default (outro)',j.status,j.nextOccurrences[0]?.local ?? 'none']));
   s.p('Editable plan (replace the entire plan to remove a timetable; separate entries with newlines or |):');
-  s.code(plan.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}`).join(' | '));
+  s.code(plan.entries.map(j=>`${j.scheduleText}: ${selectionDescription(j)}${outroDescription(j.outros)}${destinationClause(j.destinations)}`).join(' | '));
   for (const entry of plan.entries) {
     if (entry.policy === 'custom' || entry.remaining.length) {
       s.h(3, entry.scheduleText);
@@ -645,16 +656,17 @@ async function cmdTools() {
   } else if (action === "manual_preview") {
     const parsed=await interpretManualEntry(await flexiblePreview('manual',target),selectionModel());
     const resolved=resolveManualEntry(parsed,await (await drive()).listVideos());
-    s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
+    s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Destinations',destinationDescription(resolved.destinations)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
+    console.log(JSON.stringify({preview:'manual',destinations:resolved.destinations,saved:false,published:false}));
     s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
   } else if (action === "plan_preview") {
     const interpreted = await interpretPlan(await flexiblePreview('plan',target),selectionModel());
-    console.log(JSON.stringify({preview:'plan',entries:interpreted.map(e=>({schedule:e.scheduleText,policy:e.policy,filenames:e.filenames,outros:e.outroNames??{}})),saved:false,published:false}));
+    console.log(JSON.stringify({preview:'plan',entries:interpreted.map(e=>({schedule:e.scheduleText,policy:e.policy,filenames:e.filenames,outros:e.outroNames??{},destinations:e.destinations})),saved:false,published:false}));
     s.p('Interpreted plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving. A new every-N-days interval without a starting date uses the local save date; matching existing intervals keep their anchor.');
-    s.table(['Timetable', 'Selection', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
+    s.table(['Timetable', 'Selection', 'Destinations', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),destinationDescription(e.destinations),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
   } else if (action === "rule_preview") {
-    const interpreted = await interpretSelection(await flexiblePreview('rule',target),selectionModel());
-    s.p(`Interpreted rule: ${selectionDescription({...interpreted,originalCustom:interpreted.filenames.map(fileName=>({fileName}))})}. Nothing was saved or published.`);
+    const interpreted = await interpretRuleEntry(await flexiblePreview('rule',target),selectionModel());
+    s.p(`Interpreted rule: ${selectionDescription({...interpreted,originalCustom:interpreted.filenames.map(fileName=>({fileName}))})}. Destinations: ${destinationDescription(interpreted.destinations)}. Nothing was saved or published.`);
   } else if (action === "verify") {
     await verify(s, state);
   } else if (action === "preview") {
@@ -683,7 +695,7 @@ async function cmdTools() {
       const begin = await state.beginRun({ origin: "retry", githubRunId: env("GITHUB_RUN_ID"), githubRunUrl: runUrl() });
       const st = await state.state();
       s.p(`Retrying only: ${failed.map((p: any) => `${p.platform}/${p.surface}`).join(", ")}`);
-      await publishFlow({ runId: begin.runId!, origin: "retry", policy: st.settings.selectionPolicy, forcedFileId: failed[0].file_id, filter: new Set(failed.map((p: any) => `${p.platform}:${p.surface}`)), summary: s, state });
+      await publishFlow({ runId: begin.runId!, origin: "retry", policy: st.settings.selectionPolicy, forcedFileId: failed[0].file_id, destinations: [...new Set(failed.map(p => taskDestination(p.platform,p.surface)))], filter: new Set(failed.map((p: any) => `${p.platform}:${p.surface}`)), summary: s, state });
     }
   } else throw new Error(`unknown tool action ${action}`);
   s.write();

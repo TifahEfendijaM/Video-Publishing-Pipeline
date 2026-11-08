@@ -12,7 +12,7 @@ plan, which simply reports the saved plan without changing it.
 | `run_mode` | `automated` edits/pauses/resumes the plan, never publishes immediately. `manual_now` publishes one video now. |
 | `plan_action` | `edit` replaces the complete plan when text is supplied; `pause` and `resume` retain its rules and Custom progress. |
 | `publishing_plan` | Describe the whole plan naturally, or pair timetables/rules with newlines or ` | `. Natural text is interpreted by Codex during this run. Blank Edit retains saved pairs/progress. Ignored for Pause/Resume/manual. |
-| `video_selection` | Manual only: one combined video/outro entry, such as `lifo; outro: "End.mp4"` or `custom: "Video.mp4"; outro: none`. Blank uses saved defaults. |
+| `video_selection` | Manual only: one combined video/destinations/outro entry, such as `lifo; outro: "End.mp4"` or `custom: "Video.mp4"; outro: none`. Blank uses saved defaults. |
 | `manual_schedule_action` | Manual only: `keep_schedule` (default) leaves the plan untouched; `pause_schedule` pauses it before the one-off upload. |
 
 ### Write paired timetables and rules
@@ -144,6 +144,55 @@ Omitting the clause keeps an existing entry's saved choices, including when its 
 A new timetable defaults to the clip named `outro`. Use `outro: none` to disable it explicitly. Editing
 outros never restarts an unchanged Custom list. The summary includes each entry's choices and a copyable
 plan. A saved clip missing at publishing time is reported and that platform publishes without it.
+
+### Choose publishing destinations
+
+Use natural language in either `video_selection` or each scheduled plan rule. Codex interprets the
+platform and format restrictions, then code validates the resulting destination list before publishing.
+If no destinations are specified, the default is every configured platform, including **both** a YouTube
+Short (when eligible) and a regular non-Short video.
+
+Manual examples (replace the filename with an exact source filename):
+
+```text
+"Video.mp4" publish only on YouTube as a regular video
+"Video.mp4" publish only as a Short on YouTube
+"Video.mp4" publish on all platforms except on YouTube as a regular video (but still as a Short)
+"Video.mp4" publish on all except TikTok
+```
+
+For a scheduled plan, give each timetable/rule its own choices, for example:
+
+```text
+Replace the plan: every Monday at 18:00 publish the newest video only on YouTube as a regular video. Every Friday at 21:00 pick a random video whose title ends with [available] and publish everywhere except TikTok.
+```
+
+Equivalent formatted entries skip AI:
+
+```text
+Mon 18:00: lifo; destinations: youtube/video
+Fri 21:00: random video whose title ends with "[available]"; destinations: all except tiktok
+Sun 19:00: custom: "Video.mp4"; destinations: youtube/short; outro: none
+```
+
+Supported destination names are `instagram/reel`, `instagram/story`, `facebook/feed`, `facebook/story`,
+`tiktok/feed`, `youtube/short`, and `youtube/video`. A bare platform name selects all its supported
+surfaces; `youtube` selects both versions. Lists are comma-separated; `all` and `all except ...` are
+supported. An empty list or unknown destination is rejected. Destination restrictions do not bypass
+account verification, global enable switches or media eligibility, and an unavailable Short never
+falls back to another destination you excluded.
+
+Each scheduled entry's choices apply to every video selected by that rule (including its Custom list).
+They survive Pause/Resume and are shown in status, previews and the copyable plan. Updating only
+choices retains Custom progress. Omission in a supplied replacement entry means **all** again; blank
+Edit keeps the complete saved plan. Codex preserves unchanged entries' choices in an explicitly partial
+or additive edit. Manual choices affect only the current upload and do not become saved defaults.
+
+Only selected destinations get publication checkpoints. Excluded platforms neither upload nor block
+completion: after selected publications are confirmed, the existing Drive archival and Custom-list
+advancement rules still apply. Stories select all generated chronological parts.
+
+Use **Tools → manual_preview / plan_preview** to inspect an entry without saving or publishing.
 
 ### One-off video and outro entry
 

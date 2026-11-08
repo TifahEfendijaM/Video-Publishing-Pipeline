@@ -3,19 +3,21 @@ import { parseSchedule, type Slot } from "../../src/shared/schedule";
 import { dueTimetable, nextTimetable, formatTimetable, type Timetable } from '../../src/shared/timetable';
 import type { CustomVideo, JobPolicy, TitleRule } from "../../src/shared/job-selection";
 import { planState } from './plan-state';
+import { validateDestinations, type Destination } from '../../src/shared/destinations';
 
 export interface ScheduledJob {
   id: string; name: string; schedule: Timetable; scheduleText: string; policy: JobPolicy;
   remaining: CustomVideo[]; titleRule: TitleRule | null; outros: Outros;
   status: "active" | "completed" | "stopped"; version: number; enabledAt: string;
   originalCustom: CustomVideo[];
+  destinations?: Destination[];
 }
 const iso = (n: number) => new Date(n).toISOString();
 function read(r: any): ScheduledJob {
   const schedule = JSON.parse(r.schedule_json);
   return { id: r.id, name: r.name, schedule, scheduleText: formatTimetable(schedule), policy: r.policy,
     remaining: JSON.parse(r.remaining_json), titleRule: r.title_rule_json ? JSON.parse(r.title_rule_json) : null,
-    outros: JSON.parse(r.outros_json), status: r.status, version: r.version, enabledAt: r.enabled_at,
+    outros: JSON.parse(r.outros_json), destinations: validateDestinations(r.destinations_json ? JSON.parse(r.destinations_json) : undefined), status: r.status, version: r.version, enabledAt: r.enabled_at,
     originalCustom: JSON.parse(r.custom_original_json ?? (r.policy === 'custom' ? r.remaining_json : '[]')) };
 }
 export async function jobById(db: Db, id: string): Promise<ScheduledJob | null> {
