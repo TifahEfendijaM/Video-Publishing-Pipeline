@@ -3,12 +3,54 @@
 // lifecycle rule as a backstop). Used only for providers that must fetch media from a URL (Buffer, Instagram).
 import { AwsClient } from "aws4fetch";
 import { randomUUID } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compressToSize, probe } from "./media-tools";
 import { registerSecret } from "../../src/shared/redact";
 
 export interface HostedObject {
   key: string;
   url: string; // presigned, secret — never print
+}
+
+export interface TemporaryHosting {
+  put(path: string): Promise<HostedObject>;
+  remove(key: string): Promise<void>;
+}
+
+/** Free KV first; compress oversized files when an optional R2 account is absent. */
+export class SizeLimitedHosting implements TemporaryHosting {
+  private owners = new Map<string, TemporaryHosting>();
+  constructor(private kv: TemporaryHosting, private r2: TemporaryHosting | null, private note: (text: string) => void = () => {}) {}
+
+  async put(path: string): Promise<HostedObject> {
+    let host = this.kv;
+    let uploadPath = path;
+    let work: string | undefined;
+    try {
+      const size = statSync(path).size;
+      if (size > KvHosting.MAX_BYTES) {
+        if (this.r2) host = this.r2;
+        else {
+          work = mkdtempSync(join(tmpdir(), "ebv-host-"));
+          uploadPath = join(work, "compressed.mp4");
+          const encoded = await compressToSize(path, uploadPath, await probe(path), KvHosting.MAX_BYTES);
+          this.note(`Free hosting: compressed ${(size / 1048576).toFixed(2)} MB to ${(encoded.sizeBytes / 1048576).toFixed(2)} MB; complete frame and full duration retained. Visual quality may be reduced; original Drive file unchanged.`);
+        }
+      }
+      const object = await host.put(uploadPath);
+      this.owners.set(object.key, host);
+      return object;
+    } finally {
+      if (work) rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  async remove(key: string): Promise<void> {
+    await (this.owners.get(key) ?? this.kv).remove(key);
+    this.owners.delete(key);
+  }
 }
 
 export class R2Hosting {

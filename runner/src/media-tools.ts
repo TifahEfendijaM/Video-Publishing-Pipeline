@@ -1,7 +1,9 @@
 // ffprobe / ffmpeg wrappers. The original file is never modified.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { MediaInfo, StorySegment } from "../../src/shared/media";
 import { STORY_CANVAS, WIDESCREEN_CANVAS } from "../../src/shared/media";
 
@@ -35,6 +37,46 @@ export function parseProbe(probe: any, sizeBytes: number): MediaInfo {
 export async function probe(path: string): Promise<MediaInfo> {
   const { stdout } = await run("ffprobe", ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", path], { maxBuffer: 10 * 1024 * 1024 });
   return parseProbe(JSON.parse(stdout), statSync(path).size);
+}
+
+/** Encode the entire video to a byte budget. Never use -fs (it can truncate the clip). */
+export async function compressToSize(src: string, dest: string, info: MediaInfo, maxBytes: number): Promise<MediaInfo> {
+  if (resolve(src) === resolve(dest)) throw new Error("compression must not overwrite the source");
+  if (!Number.isFinite(info.durationSec) || info.durationSec <= 0 || !Number.isFinite(maxBytes) || maxBytes <= 0) {
+    throw new Error("compression needs a positive duration and byte limit");
+  }
+  const work = mkdtempSync(join(tmpdir(), "ebv-encode-"));
+  // Leave room for the MP4 container and AAC encoder variance, then verify the actual file.
+  let budget = maxBytes * 0.93;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const totalRate = Math.floor(budget * 8 / info.durationSec);
+      const audioRate = info.audioCodec ? (totalRate >= 384_000 ? 128_000 : 64_000) : 0;
+      const videoRate = totalRate - audioRate;
+      if (videoRate < 64_000) throw new Error("full video cannot fit the free hosting limit at a usable bitrate; nothing was cut or uploaded");
+      // FFmpeg retains the display aspect ratio, including non-square pixels and autorotation.
+      const vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p";
+      const video = ["-y", "-v", "error", "-i", src, "-map", "0:v:0", "-vf", vf,
+        "-c:v", "libx264", "-preset", "medium", "-b:v", String(videoRate),
+        "-passlogfile", join(work, `pass-${attempt}`)];
+      await run("ffmpeg", [...video, "-pass", "1", "-an", "-f", "null", "-"], { maxBuffer: 10 * 1024 * 1024 });
+      await run("ffmpeg", [...video, "-pass", "2", "-map", "0:a:0?", "-c:a", "aac", "-b:a", String(audioRate || 64_000),
+        "-ar", "48000", "-movflags", "+faststart", dest], { maxBuffer: 10 * 1024 * 1024 });
+      const encoded = await probe(dest);
+      if (Math.abs(encoded.durationSec - info.durationSec) > Math.max(0.25, 2 / Math.max(1, info.fps))) {
+        throw new Error("compressed video duration changed; refusing to upload it");
+      }
+      if (info.audioCodec && !encoded.audioCodec) throw new Error("compressed video lost its audio; refusing to upload it");
+      if (encoded.sizeBytes <= maxBytes) return encoded;
+      budget *= maxBytes / encoded.sizeBytes * 0.9;
+    }
+    throw new Error("compressed video still exceeds the free hosting limit; nothing was cut or uploaded");
+  } catch (e) {
+    rmSync(dest, { force: true });
+    throw e;
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
 }
 
 /**

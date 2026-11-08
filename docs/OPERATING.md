@@ -207,7 +207,7 @@ Weekly, every-N-days recurring, or dated one-time, Europe/Sarajevo time (summer/
 | `publishing_enable` / `publishing_disable` | Global kill switch (checked right before every publication) | — |
 | `reconcile` | Re-reads provider status and retries Drive cleanup of confirmed sources; never re-sends | no |
 | `resolve_publication` | After you checked manually: mark an uncertain item `confirmed` or `failed` (`target` = publication ID), then clean up if complete | no |
-| `retry_failed` | Re-attempts only current **failed or skipped/disabled** destinations in a run (`target` = run ID) | yes (only those) |
+| `retry_failed` | Re-attempts only current **failed or skipped/disabled** destinations in a run (`target` = run ID); optional `destinations` narrows it to e.g. `instagram/feed,youtube/short,tiktok/feed` | yes (only those) |
 
 ## How videos advance, and failures
 
@@ -232,6 +232,11 @@ Weekly, every-N-days recurring, or dated one-time, Europe/Sarajevo time (summer/
 - **Failed** means nothing was published there; `retry_failed` re-attempts only those, never the ones
   that succeeded. Skipped/disabled destinations can also be explicitly retried after fixing their configuration.
   A retry targeting an old run will not resend a destination that succeeded in a later retry.
+  To exclude a destination reported as failed that you can already see live, set the Tools form's
+  `destinations` field to only the destinations you want to recover. Unknown or ineligible destination
+  names stop the retry before anything is sent. A blank field retains the existing retry-all-failures behavior.
+  Upload-Post responses without definitive evidence are now treated as processing/uncertain rather than
+  safe failures; this does not retroactively repair old checkpoints.
   **Uncertain** (e.g. a response lost after the publish request) is never retried
   automatically: check the account, then `resolve_publication`.
 - Editing or pausing the plan invalidates older scheduled occurrences. Manual `pause_schedule` pauses it.
@@ -267,6 +272,15 @@ The shape is read from each file with ffprobe, so mixed folders work. The `previ
 versions as an artifact only when the repository is private; public runs retain the text summary without uploading preview media. Note: posting the same clip twice on one channel is your explicit choice;
 YouTube may treat near-duplicate uploads as repetitive content, so keep an eye on channel feedback.
 Upload-Post's free plan (10/month) is used only for the regular video.
+
+Instagram and Buffer fetch videos through temporary hosting. Files up to 24 MB use the existing free
+Workers KV route unchanged. When R2 is not configured, larger files are automatically re-encoded to
+fit below that limit with two-pass H.264/AAC encoding. The complete frame, full duration and audio are
+retained; visual quality may be reduced. The source file in Drive is unchanged. The runner verifies the
+encoded file's actual size and duration before uploading it; an encoding that cannot fit fails without
+cutting the video. This also applies to Story renditions and clips with outros. The run summary reports
+the original and compressed sizes. Shared media is encoded/hosted once per run and deleted after use.
+An already configured optional R2 route still hosts oversized originals without this compression.
 
 ## What "same video" means (Drive file ID)
 

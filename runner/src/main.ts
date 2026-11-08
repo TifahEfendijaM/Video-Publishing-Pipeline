@@ -17,19 +17,18 @@ import { probe, renderStory, renderCanvas, renderWidescreen, concatWithOutro } f
 import type { MediaInfo } from "../../src/shared/media";
 import { effectiveOutro } from "../../src/shared/selection";
 import { makeCaptions, CAPTION_SCHEMA } from "./captioner";
-import { KvHosting, R2Hosting } from "./hosting";
-import { statSync } from "node:fs";
+import { KvHosting, R2Hosting, SizeLimitedHosting } from "./hosting";
 import { Meta } from "./providers/meta";
 import { Buffer } from "./providers/buffer";
 import { YouTube } from "./providers/youtube";
 import { UploadPost } from "./providers/uploadpost";
 import { buildTasks, executeTasks, type Identities, type Providers, type StoryFiles, type TaskResult } from "./publish";
-import { completeArchived, latestPublications, maintainQueue } from "./queue";
+import { completeArchived, maintainQueue } from "./queue";
 import { Summary, statusLabel } from "./summary";
 import { NO_ELIGIBLE_MESSAGE, selectVideo, type FolderVideo, type SelectionPolicy } from "../../src/shared/selection";
 import { planFeed, planStory, planYouTubeVersions } from "../../src/shared/media";
 import { redact, summarizeError } from "../../src/shared/redact";
-import { isRetryable, type PublicationStatus } from "../../src/shared/status";
+import { selectRetryPublications } from "./retry";
 
 const sec = secrets();
 const cfg = loadConfig();
@@ -181,31 +180,12 @@ function r2(): R2Hosting | null {
   return new R2Hosting(account, bucket, ak, sk, cfg.hosting.presignedUrlTtlSeconds);
 }
 
-/** Free Workers KV hosting by default; optional R2 only for files above the KV size limit. */
-function hosting(): { put(p: string): Promise<{ key: string; url: string }>; remove(k: string): Promise<void> } | null {
+/** Free KV hosting with size-bounded compression; an existing R2 setup can retain originals. */
+function hosting(note?: (text: string) => void): SizeLimitedHosting | null {
   const url = env("STATE_API_URL");
   const token = sec("STATE_API_TOKEN");
   if (!url || !token) return null;
-  const kv = new KvHosting(url, token);
-  const big = r2();
-  const owner = new Map<string, "kv" | "r2">();
-  return {
-    async put(p) {
-      if (statSync(p).size > KvHosting.MAX_BYTES) {
-        if (!big) throw new Error(`file exceeds ${KvHosting.MAX_BYTES / 1048576} MB free hosting limit and optional R2 is not configured`);
-        const o = await big.put(p);
-        owner.set(o.key, "r2");
-        return o;
-      }
-      const o = await kv.put(p);
-      owner.set(o.key, "kv");
-      return o;
-    },
-    async remove(k) {
-      if (owner.get(k) === "r2") await big?.remove(k);
-      else await kv.remove(k);
-    },
-  };
+  return new SizeLimitedHosting(new KvHosting(url, token), r2(), note);
 }
 
 function settingsRows(s: any, next: any[]): [string, string][] {
@@ -416,7 +396,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       return "preview";
     }
 
-    const host = hosting();
+    const host = hosting((note) => s.p(note));
     const { results, hostedKeys } = await executeTasks(o.runId, v.id, tasks, {
       mayPublish: (id) => o.state.mayPublish(id),
       record: async (r) => {
@@ -695,8 +675,8 @@ async function cmdTools() {
   } else if (action === "retry_failed") {
     if (!target) throw new Error("retry_failed needs target = the run ID from the original run summary");
     const pubs = (await state.publications({ runId: target })).publications;
-    const latest = pubs.length ? latestPublications((await state.publications({ fileId: pubs[0].file_id })).publications) : [];
-    const failed = pubs.filter((p: any) => isRetryable(p.status as PublicationStatus) && latest.some((q) => q.id === p.id));
+    const all = pubs.length ? (await state.publications({ fileId: pubs[0].file_id })).publications : [];
+    const failed = selectRetryPublications(pubs, all, env("TOOL_DESTINATIONS"));
     if (!failed.length) {
       s.p("Nothing to retry: no current failed or skipped destinations in that run (confirmed or pending outcomes are never resent).");
     } else {
