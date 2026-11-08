@@ -1,5 +1,6 @@
 import type { CustomVideo, JobPolicy, TitleRule } from './job-selection';
 import { parseTimetable, formatTimetable, timetablesOverlap, type Timetable } from './timetable';
+import { validateDestinations, type Destination } from './destinations';
 export type EntryOutros = Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook', CustomVideo | null>>;
 
 export interface PlanEntryInput {
@@ -8,6 +9,7 @@ export interface PlanEntryInput {
   custom: CustomVideo[];
   titleRule: TitleRule | null;
   outros?: EntryOutros;
+  destinations?: Destination[];
 }
 
 /** Identity excludes timetable: moving an unchanged list to another day retains its progress. */
@@ -50,6 +52,6 @@ export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
         if (!['youtube','tiktok','instagram','facebook'].includes(platform) || (outro !== null && (!outro || !/^[A-Za-z0-9_-]{10,200}$/.test(outro.fileId) || typeof outro.fileName !== 'string' || !outro.fileName.trim() || outro.fileName.length > 300))) throw new Error('Invalid outro choice');
       }
     }
-    return { ...entry, scheduleText: formatTimetable(schedule) };
+    return { ...entry, scheduleText: formatTimetable(schedule), destinations: validateDestinations(entry.destinations) };
   });
 }

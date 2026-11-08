@@ -42,7 +42,7 @@ async function body(req: Request): Promise<any> {
 export async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const now = Date.now();
-  if (url.pathname === "/health") return json({ ok: true, service: "easybosnian-video-scheduler" });
+  if (url.pathname === "/health") return json({ ok: true, service: "easybosnian-video-scheduler", features: { destinationSelection: true } });
   const media = /^\/media\/([a-f0-9]{64})\.mp4$/.exec(url.pathname);
   if (media && (req.method === "GET" || req.method === "HEAD")) {
     if (!env.MEDIA) return json({ error: "media hosting not configured" }, 404);

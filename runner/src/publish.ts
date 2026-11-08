@@ -9,6 +9,7 @@ import type { Meta } from "./providers/meta";
 import type { Buffer } from "./providers/buffer";
 import type { YouTube } from "./providers/youtube";
 import type { UploadPost } from "./providers/uploadpost";
+import { taskDestination, validateDestinations, type Destination } from "../../src/shared/destinations";
 
 export interface TaskCtx {
   url?: string; // temporary hosted URL of mediaPath (only when needsUrl)
@@ -179,6 +180,7 @@ export function buildTasks(o: {
   youtube?: { plan: YouTubeVersions; shortPath: string | null; regularPath: string | null };
   /** per-platform feed file (the video with that platform's outro appended), default: original */
   feedPaths?: Partial<Record<"instagram" | "facebook" | "tiktok", string>>;
+  destinations?: Destination[];
 }): Task[] {
   const { cfg, feed, stories, originalPath, captions, providers, identities } = o;
   const igPath = o.feedPaths?.instagram ?? originalPath;
@@ -275,7 +277,8 @@ export function buildTasks(o: {
   if (d.youtube.enabled) {
     tasks.push(...youtubeTasks(o));
   }
-  return tasks;
+  const selected = validateDestinations(o.destinations);
+  return tasks.filter(t => selected.includes(taskDestination(t.platform, t.surface)));
 }
 
 function youtubeTasks(o: Parameters<typeof buildTasks>[0]): Task[] {

@@ -5,8 +5,9 @@ import { resolveCustomName } from '../../src/shared/selection';
 import { validatePlanEntries, type PlanEntryInput } from '../../src/shared/publishing-plan';
 import { parseTimetable, formatTimetable } from '../../src/shared/timetable';
 import type { FolderVideo } from '../../src/shared/selection';
+import { parseDestinations, validateDestinations, type Destination } from '../../src/shared/destinations';
 
-export interface SelectionEntry { policy: JobPolicy; titleRule: TitleRule | null; filenames: string[]; outroNames?: Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook',string|null>> }
+export interface SelectionEntry { policy: JobPolicy; titleRule: TitleRule | null; filenames: string[]; outroNames?: Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook',string|null>>; destinations?: Destination[] }
 export async function interpretSelection(text: string, model: CaptionModel): Promise<SelectionEntry> {
   const value = text.trim();
   const custom = /^(?:custom|(?:publish\s+)?(?:this\s+)?list(?:\s+in\s+order)?)\s*:\s*([\s\S]+)$/i.exec(value);
@@ -34,9 +35,9 @@ export async function interpretPlan(text: string, model: CaptionModel) {
     if (!delimiter) throw new Error('Pair each timetable with a rule: Monday at 06:00: newest video first');
     const slots = parseTimetable(line.slice(0,delimiter.index));
     if (!slots) throw new Error('Each rule needs a timetable');
-    const {rule,outroNames} = parseOutroClauses(line.slice(delimiter.index+delimiter[0].length));
+    const {rule,outroNames,destinations} = parseOutroClauses(line.slice(delimiter.index+delimiter[0].length));
     const selection = await interpretSelection(rule,model);
-    entries.push({...selection,scheduleText:formatTimetable(slots), ...(Object.keys(outroNames).length ? {outroNames} : {})});
+    entries.push({...selection,scheduleText:formatTimetable(slots),destinations, ...(Object.keys(outroNames).length ? {outroNames} : {})});
   }
   // Validate schedules/overlaps before any Drive reads or saved changes.
   validatePlanEntries(entries.map((entry,index)=>({...entry,custom:entry.filenames.map((fileName,i)=>({fileId:`preview_${index}_${String(i).padStart(5,'0')}`,fileName}))})));
@@ -69,16 +70,23 @@ export function resolvePlan(entries: (SelectionEntry & {scheduleText:string})[],
       custom = prior?.originalCustom ?? resolveCustomList(entry.filenames.map(n=>`"${n.replace(/"/g,'""')}"`).join(','),videos);
     }
     const outros=resolveOutroChoices(entry.outroNames ?? {},videos);
-    return {scheduleText:entry.scheduleText,policy:entry.policy,titleRule:entry.titleRule,custom, ...(entry.outroNames ? {outros} : {})};
+    return {scheduleText:entry.scheduleText,policy:entry.policy,titleRule:entry.titleRule,custom,destinations:validateDestinations(entry.destinations), ...(entry.outroNames ? {outros} : {})};
   }));
 }
 
 function parseOutroClauses(text:string, perPlatform=true) {
     const [rule, ...clauses] = splitOutsideQuotes(text, c=>c===';');
     const outroNames: NonNullable<SelectionEntry['outroNames']> = {};
+    let destinations: Destination[] | undefined;
     for (const clause of clauses) {
+      const targets = /^destinations\s*:\s*(.+)$/i.exec(clause);
+      if (targets) {
+        if (destinations) throw new Error('Specify destinations only once per entry');
+        destinations = parseDestinations(targets[1]);
+        continue;
+      }
       const match = /^(?:(youtube|tiktok|instagram|facebook)\s+)?outro\s*:\s*(.+)$/i.exec(clause);
-      if (!match) throw new Error('Use ; outro: "Clip.mp4" or ; youtube outro: none after the selection rule');
+      if (!match) throw new Error('Use ; destinations: youtube/video or ; outro: "Clip.mp4" after the selection rule');
       if (!perPlatform && match[1]) throw new Error('Manual uploads use one outro for all platforms; write ; outro: \"Clip.mp4\"');
       const names = parseCustomList(match[2]);
       if (names.length !== 1) throw new Error('Choose one outro filename per outro clause');
@@ -89,16 +97,22 @@ function parseOutroClauses(text:string, perPlatform=true) {
         outroNames[platform as keyof typeof outroNames] = name;
       }
     }
-  return {rule,outroNames};
+  return {rule,outroNames,destinations:validateDestinations(destinations)};
+}
+
+export async function interpretRuleEntry(text: string, model: CaptionModel) {
+  const { rule, outroNames, destinations } = parseOutroClauses(text);
+  if (Object.keys(outroNames).length) throw new Error('Rule previews support selection and destinations, without outros');
+  return { ...await interpretSelection(rule, model), destinations };
 }
 
 export async function interpretManualEntry(text:string, model:CaptionModel) {
   if (text.length>2000) throw new Error('Manual entry is too long (max 2000 characters)');
-  if (!text.trim()) return {selection:null,outroNames:{}};
-  const {rule,outroNames}=parseOutroClauses(text,false);
+  if (!text.trim()) return {selection:null,outroNames:{},destinations:validateDestinations()};
+  const {rule,outroNames,destinations}=parseOutroClauses(text,false);
   const selection=rule && rule.toLowerCase()!=='default' ? await interpretSelection(rule,model) : null;
   if (selection?.policy==='custom' && selection.filenames.length!==1) throw new Error('A one-off upload takes exactly one Custom filename');
-  return {selection,outroNames};
+  return {selection,outroNames,destinations};
 }
 
 export function resolveManualEntry(parsed:Awaited<ReturnType<typeof interpretManualEntry>>, videos:FolderVideo[]) {
@@ -109,7 +123,7 @@ export function resolveManualEntry(parsed:Awaited<ReturnType<typeof interpretMan
     pendingCustom={fileId:match.video.id,fileName:match.video.name};
   }
   const outros=resolveOutroChoices(parsed.outroNames,videos);
-  return {pendingCustom,outroOverrides:outros, titleRule:parsed.selection?.titleRule,
+  return {pendingCustom,outroOverrides:outros, destinations:parsed.destinations, titleRule:parsed.selection?.titleRule,
     policyChoice:parsed.selection ? parsed.selection.titleRule?.order ?? (parsed.selection.policy==='custom' ? null : parsed.selection.policy as 'fifo'|'lifo'|'random') : null};
 }
 
