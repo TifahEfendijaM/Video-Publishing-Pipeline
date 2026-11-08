@@ -21,7 +21,7 @@ Use exact filenames from filenames, including extensions only when present. New 
 
 An omitted outro clause preserves a matched entry's choice; new entries use the default clip named outro. Explicitly no outro: '; outro: none'. Specified outro: '; outro: "Exact filename"'. Plans also support per-platform clauses: '; youtube outro: "YT ending"; tiktok outro: none; instagram outro: none; facebook outro: none'.
 
-kind manual: return one immediate selection/destination/outro entry without a timetable, e.g. 'custom: "Video.mp4"; outro: none'. Exactly one Custom file; one shared outro, no per-platform clauses. Future uploads require a plan and must return needs_clarification here. Do not change the workflow's Keep/Pause schedule option.
+kind manual: return one immediate selection/destination/outro entry without a timetable, e.g. 'custom: "Video.mp4"; outro: none'. Exactly one Custom file; one shared outro, no per-platform outro clauses (destination choices may still name individual platforms/formats). Future uploads require a plan and must return needs_clarification here. Do not change the workflow's Keep/Pause schedule option.
 kind rule: return the selection rule with an optional destinations clause, without timetable or outro.
 
 Never invent a time, filename, selection order or unsupported rule. Unclear or unsupported instructions return status needs_clarification, normalized null and a concise explanation of the needed detail. Otherwise return ready, the complete normalized entry and a concise explanation.
