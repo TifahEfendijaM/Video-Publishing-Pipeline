@@ -11,7 +11,7 @@ plan, which simply reports the saved plan without changing it.
 |---|---|
 | `run_mode` | `automated` edits/pauses/resumes the plan, never publishes immediately. `manual_now` publishes one video now. |
 | `plan_action` | `edit` replaces the complete plan when text is supplied; `pause` and `resume` retain its rules and Custom progress. |
-| `publishing_plan` | Describe the whole plan naturally, or pair timetables/rules with newlines or ` | `. Natural text waits for the hourly cloud ChatGPT task (up to 70 minutes). Blank Edit retains saved pairs/progress. Ignored for Pause/Resume/manual. |
+| `publishing_plan` | Describe the whole plan naturally, or pair timetables/rules with newlines or ` | `. Natural text is interpreted by Codex during this run. Blank Edit retains saved pairs/progress. Ignored for Pause/Resume/manual. |
 | `video_selection` | Manual only: one combined video/outro entry, such as `lifo; outro: "End.mp4"` or `custom: "Video.mp4"; outro: none`. Blank uses saved defaults. |
 | `manual_schedule_action` | Manual only: `keep_schedule` (default) leaves the plan untouched; `pause_schedule` pauses it before the one-off upload. |
 
@@ -23,14 +23,14 @@ You may instead enter ordinary language with explicit times and exact filenames,
 Replace the plan: publish "Lesson.mp4" tonight at 21:00 without an outro. Starting tomorrow at 18:00, publish the newest video every third day with "Ending.mp4" as the outro.
 ```
 
-The hourly ChatGPT cloud task returns a normalized plan through private Drive storage. The GitHub
-preparation job waits up to 70 minutes outside the publishing lock. No settings change while waiting;
-a timeout, ambiguity, invalid result or concurrent plan/progress edit fails without saving. Formatted
-entries below bypass that wait. Specify whether to replace the whole plan or add/change an existing
-entry when writing naturally. Existing formatted Edit behavior still replaces the entire plan.
-Manual natural text uses the same preparation and delay; exact manual entries remain immediate.
+Codex interprets natural input immediately within the GitHub run, then the existing validators check
+its result. Ambiguity, an invalid result or a concurrent plan/progress edit fails without saving.
+Formatted entries below skip AI. Specify whether to replace the whole plan or add/change an existing
+entry when writing naturally. Formatted Edit still replaces the entire plan.
+Manual natural text uses the same on-demand interpretation; exact manual entries skip that call.
 Missing clock times or unclear filenames/order need clarification. Submit time-sensitive requests
-well ahead of the intended upload. Relative dates use the submission timestamp in Europe/Sarajevo.
+before the intended upload. Relative dates use the timestamp when input preparation starts in
+Europe/Sarajevo. A model call has a five-minute timeout; there is no hourly polling delay.
 
 True one-time dates are supported, e.g. `Once on 2026-11-07 at 21:00: custom: "Lesson.mp4"; outro: none`.
 This has only one possible occurrence. A new entry in the past is rejected; missed occurrences are
@@ -45,11 +45,11 @@ Sunday at 18:00: publish this list in order: "Video A.mp4", "Video B.mp4"
 ```
 
 The timetable comes first, followed by a colon and space, then its rule. `=>` can also separate them.
-Use **weekly weekdays and times**, **every N days at a time**, or **Once on YYYY-MM-DD at HH:MM**, in Europe/Sarajevo time. A start date is optional for day intervals. Natural relative-date instructions are normalized by the cloud task before validation.
+Use **weekly weekdays and times**, **every N days at a time**, or **Once on YYYY-MM-DD at HH:MM**, in Europe/Sarajevo time. A start date is optional for day intervals. Natural relative-date instructions are normalized by Codex before validation.
 The parser pairs each timetable with its rule before interpreting it; rules never depend on a matching
 position in a separate field. Overlapping occurrences (two rules for the same weekday/time) are rejected.
 There can be at most 20 entries and 50 timetable slots. Title-rule interpretation uses the existing
-cloud ChatGPT task at Edit time; scheduled runs use the saved interpretation without calling AI again.
+on-demand Codex at Edit time; scheduled runs reuse the saved selection without interpreting it again.
 Simple FIFO/LIFO/Random and exact lists are interpreted directly.
 
 Supported selections:
@@ -200,8 +200,9 @@ Weekly, every-N-days recurring, or dated one-time, Europe/Sarajevo time (summer/
 | `status` | Saved plan, paused/running state, full remaining Custom lists, defaults, next times, recent runs and open publications | no |
 | `manual_preview` | Validate one-off video/outro text in `target` without changing settings or publishing | no |
 | `plan_preview` | Interpret paired timetables/rules in `target` without saving or publishing | no |
-| `verify` | Checks every account identity, permission, folder, Buffer schema, temporary-hosting privacy, free caption model, Worker target | no |
-| `preview` | Read-only selection + media/format plan + captions + Story renders (artifact). `target` = optional filename | no |
+| `verify` | Checks account identities, permissions, folder, Buffer schema, temporary-hosting privacy, dedicated Codex sign-in and Worker target; does not call Codex | no |
+| `preview` | Read-only selection + media/format plan + captions + Story renders. Artifacts are uploaded only when the repository is private. `target` = optional filename | no |
+| `caption_preview` | Generate and validate captions/title for the exact filename in `target`; no media upload, settings or queue changes | no |
 | `dispatch_test` | Worker dispatches the scheduled workflow in non-publishing verification mode | no |
 | `publishing_enable` / `publishing_disable` | Global kill switch (checked right before every publication) | — |
 | `reconcile` | Re-reads provider status and retries Drive cleanup of confirmed sources; never re-sends | no |
@@ -263,7 +264,7 @@ cutting anything:
 | Longer than 3 min | original file | none (Shorts max 3 min) — reported, nothing is cut |
 
 The shape is read from each file with ffprobe, so mixed folders work. The `preview` tool attaches both
-versions as a private artifact. Note: posting the same clip twice on one channel is your explicit choice;
+versions as an artifact only when the repository is private; public runs retain the text summary without uploading preview media. Note: posting the same clip twice on one channel is your explicit choice;
 YouTube may treat near-duplicate uploads as repetitive content, so keep an eye on channel feedback.
 Upload-Post's free plan (10/month) is used only for the regular video.
 
@@ -284,14 +285,14 @@ Bosnian). A Bosnian word or phrase from the topic may appear, spelled with corre
 - Filenames made of IDs, numbers, dates or generic camera/export/AI-tool labels (e.g.
   `gemini_generated_video_0A28F2A0.mp4`, `178904548924381.mp4`, `Made with Veo 3.mp4`) get the reviewed
   generic English caption in `config/generic-caption.json` — no topic is invented. Edit that file to change it.
-- Meaningful filenames (e.g. `na vrh brda vrba mrda.mp4`) get a topic caption prepared by the
-  ChatGPT cloud task from the filename hint only (treated as data). Prepared text is matched by Drive
-  file ID and current exact filename. No AI API is called at upload time. The output is rejected if it
-  does not read as English or uses Cyrillic, and is validated for banned content (CEFR levels, corrections,
-  references to earlier/deleted posts or internal tooling, foreign links) and each platform's limits, always
-  ending with `👉easybosnian.com`. Missing/invalid preparation or any failure → generic caption,
-  reported. Text is never truncated. New or renamed files are prepared on future hourly task runs;
-  the task handles up to 10 new captions per run, prioritizing requested and newest videos.
+- Meaningful filenames (e.g. `na vrh brda vrba mrda.mp4`) get a topic caption generated by Codex
+  during this GitHub run, using only the filename hint as data. Text must read as English and pass
+  checks for Cyrillic, banned content (CEFR levels, corrections, earlier/deleted posts or internal
+  tooling, foreign links) and platform limits. The runner appends `👉easybosnian.com`. Invalid text
+  or an ordinary model failure uses the reported generic fallback; text is never truncated.
+  Credential persistence/integrity failures stop the run before publishing.
+- **Tools → caption_preview**, with an exact filename in `target`, tests captions without publishing,
+  changing the queue or editing the plan. It consumes included subscription usage when AI is needed.
 
 ## Stories
 

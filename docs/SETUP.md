@@ -1,30 +1,19 @@
 # Setup, authorization and deployment
 
-Everything runs in the cloud: a Cloudflare Worker (timing + dispatch + small state API on D1) and GitHub
-Actions runners (download, ffprobe/ffmpeg, uploads) and an hourly ChatGPT cloud task (interpretation,
-captions/titles). Nothing depends on your computer or on Claude.
+Everything runs in the cloud: a Cloudflare Worker (timing + dispatch + state API on D1) and GitHub
+Actions runners (Codex interpretation/captions, download, ffprobe/ffmpeg, uploads). After a one-time
+sign-in, publishing does not depend on your computer or on a separate ChatGPT scheduled task.
 
-## ChatGPT subscription preparation (default)
+## ChatGPT subscription via on-demand Codex CLI (default)
 
-`config/pipeline.json` selects `captions.provider = "chatgpt_task"`. It reads the preparation Google
-Doc identified by `captions.preparedDocumentId`, which must be directly in the source folder so the
-existing Drive identity can read it. No OpenAI API key, paid AI API, local app, or local credentials are
-used by this path. The connected ChatGPT GitHub and Google Drive plugins handle preparation.
+`config/pipeline.json` selects `captions.provider = "codex_cli"` and the account's default Codex model.
+The CLI starts only when a GitHub run needs interpretation or captions. It refuses paid API keys and
+has no automatic paid-provider fallback. Subscription limits still apply.
 
-Create/keep the hourly cloud task described in [CHATGPT_TASK.md](CHATGPT_TASK.md), and verify its
-settings explicitly say **Runs on Cloud**. A desktop/local task is unsuitable. Subscription task/tool
-availability and usage limits still apply. The task must be able to read this repository and the source
-folder and edit only the result Doc. Keep all source filenames, requests and generated copy in Drive.
-`captions.requestInboxFileId` points to a pre-created, user-owned JSON inbox in the source folder.
-GitHub updates that file instead of creating service-account-owned files (service accounts have no
-storage quota). Natural preparation jobs are serialized; formatted uploads bypass that queue.
-The cloud task reads the inbox and writes the result Doc. The originating job clears only its own
-matching request afterward; stale responses cannot apply to another request.
-
-Run a nonpublishing **Tools → plan_preview** with a natural request to test the complete handoff.
-Run **Tools → verify** to check the preparation Doc is accessible to the pipeline identity. Deploy
-the updated Worker before saving dated `Once on ...` entries. Existing formatted entries can still
-be used immediately while ChatGPT preparation is unavailable.
+**Before activating:** create a new sign-in specifically for the video pipeline. Public repository
+execution is explicitly authorized with the same guarded approach as the image pipeline. See [CODEX_CLI.md](CODEX_CLI.md) for the official documentation constraint,
+authorized public-execution boundary, secure login procedure, encrypted token rotation and nonpublishing validation steps. Keep the current
+hourly task until the CLI path is verified, then delete it. The new path needs no Drive inbox/result Doc.
 
 **This project shares nothing with the image-card pipeline**: its own repository, Worker
 (`easybosnian-video-scheduler`), D1 database (`easybosnian-video-pipeline`), KV namespace and secrets.
@@ -41,7 +30,7 @@ Do not reuse that project's tokens; create new ones below.
 | 4 | **Meta app + system user** | developers.facebook.com → Create app (Business) linked to your Business portfolio; business.facebook.com → Users → **System users** → add (Admin) → assign the Easy Bosnian **Page** (full control) and the **@easy_bosnian** Instagram account → Generate token (never expires) | Permissions: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, `instagram_content_publish`, `business_management`. Then exchange for the **Page** token: `GET /{page-id}?fields=access_token` with the system-user token. | ⏳ you |
 | 5 | **Buffer API key** (TikTok + YouTube Shorts) | publish.buffer.com/settings/api; Buffer → Channels → connect YouTube **@EasyBosnian** | Personal API key of the Buffer account where @easy.bosnian TikTok is connected. TikTok and YouTube (@EasyBosnian, for Shorts) must be connected in Buffer (free plan: 3 channels). | ⏳ you |
 | 5b | **Upload-Post** (YouTube regular videos) | app.upload-post.com → sign up (free, no card) → create a profile named `easybosnian` → connect YouTube as the **@EasyBosnian** channel → API Keys → create key | Free plan: 10 uploads/month. | ⏳ you |
-| 6 | **Cloudflare Workers AI token** (legacy alternative only) | Optional when explicitly selecting `cloudflare_workers_ai` instead of ChatGPT preparation | Not required or called by the default `chatgpt_task` provider. Retain an existing token only if using that legacy provider. | optional |
+| 6 | **Cloudflare Workers AI token** (legacy alternative only) | Optional when explicitly selecting `cloudflare_workers_ai` instead of Codex CLI | Not required or called by the default `codex_cli` provider. Retain an existing token only if using that legacy provider. | optional |
 | 7 | **Cloudflare deploy token** | dash.cloudflare.com → My Profile → API Tokens → Create custom token | Account permissions: **Workers Scripts: Edit**, **D1: Edit**, **Workers KV Storage: Edit**; Account Resources: your account only. No payment method needed: temporary video hosting uses the free Workers KV (≤24 MB per video). R2 is optional and only for videos over 24 MB (R2 requires a card on file, so it is left off). | ⏳ you |
 | 8 | **GitHub dispatch token** for the Worker | github.com/settings/personal-access-tokens → Fine-grained | Resource owner TifahEfendijaM; **Only select repositories: Video-Publishing-Pipeline**; Repository permissions: **Actions: Read and write** (Metadata: read is automatic). Nothing else. Expiry: up to 1 year (calendar a renewal). | ⏳ you |
 
@@ -98,7 +87,8 @@ Settings → Secrets and variables → Actions.
 | `META_APP_ID`, `META_APP_SECRET` | step 4 app (only used to inspect token scopes in `verify`) |
 | `BUFFER_API_KEY` | step 5 |
 | `UPLOAD_POST_API_KEY` | step 5b |
-| `CLOUDFLARE_AI_TOKEN` | step 6 (Workers AI: Read) |
+| `CLOUDFLARE_AI_TOKEN` | Optional legacy provider only (Workers AI: Read) |
+| `VIDEO_CODEX_AUTH_JSON` | New dedicated video ChatGPT sign-in; seed only, refreshed state is encrypted in D1 |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | optional, only for videos over 24 MB |
 
 **Variables**
@@ -144,11 +134,11 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 
 ## 4. First checks (none of these publish)
 
-1. Tools → `verify` — identities, scopes, Drive folder, Activity API, Buffer schema, temporary-hosting privacy, free caption model.
+1. Tools → `verify` — identities, scopes, Drive folder, Buffer schema, temporary-hosting privacy, dedicated Codex sign-in.
 2. Tools → `dispatch_test` — Worker → GitHub dispatch round trip; a "Scheduled publish (Worker)" run
    appears and exits with "Dispatch verified".
 3. Tools → `preview` — selects (read-only), downloads, probes, plans formats, writes captions, renders
-   Story files as a private artifact.
+   Story files. Artifacts are uploaded only for a private repository; public runs expose only the redacted summary.
 4. Only when you decide: Tools → `publishing_enable` (kill switch ON). It starts **OFF**.
 
 ## 5. Costs (expected)
@@ -157,8 +147,8 @@ wake-up; the real schedule is the Sarajevo slot list in D1.
 |---|---|
 | Cloudflare Workers (1,440 cron wake-ups/day), D1 | free plan |
 | Cloudflare Workers KV (temporary videos, deleted after use, 6 h expiry) | free plan; over-limit writes fail rather than bill |
-| GitHub Actions (private repo) | ~3–8 min per publish run; free plan includes 2,000 min/month |
-| Captions (Cloudflare Workers AI, `@cf/meta/llama-3.3-70b-instruct-fp8-fast`) | $0: about 100 of the 10,000 free daily Neurons per topic caption; generic filenames use no model at all. On the Workers Free plan nothing can be billed. |
+| GitHub Actions | Standard runners are free for this authorized public repository. If made private later, runs draw from the account's included compute allowance and overages may be billed or blocked. See [current billing settings](https://docs.github.com/en/billing/concepts/product-billing/github-actions). |
+| Codex interpretation and captions | Uses the existing ChatGPT subscription allowance; no paid OpenAI API key or automatic paid-model fallback. Generic filenames use no model. Subscription limits and reauthorization can interrupt AI work. |
 | Upload-Post (YouTube) | free plan, 10 uploads/month, no card |
 | Buffer | your existing plan; the API is included on all plans (free: 3,000 requests/30 days; we poll once per minute, ≤20 per post) |
 | Meta, YouTube Data API, Drive APIs | free (YouTube default quota 10,000 units/day suffices for a daily upload) |

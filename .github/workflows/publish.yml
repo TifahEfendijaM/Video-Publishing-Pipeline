@@ -18,11 +18,11 @@ on:
         required: true
         options: [edit, pause, resume]
       publishing_plan:
-        description: 'Scheduled Edit: describe the complete plan naturally, with exact filenames and times. Example: Upload "Video.mp4" tonight at 21:00 without an outro, then newest first every third day from tomorrow at 18:00 with "End.mp4". ChatGPT preparation may take up to 70 minutes. Formatted plans remain instant. All times Sarajevo.'
+        description: 'Scheduled Edit: describe the complete plan naturally, with exact filenames and times. Example: Upload "Video.mp4" tonight at 21:00 without an outro, then newest first every third day from tomorrow at 18:00 with "End.mp4". Codex interprets natural text during this run. Formatted plans skip AI. All times Sarajevo.'
         type: string
         required: false
       video_selection:
-        description: 'Manual only: describe one video and outro naturally, or use custom: "Video.mp4"; outro: none for an instant entry. Natural text waits for hourly ChatGPT preparation before uploading. Blank uses saved defaults. One shared outro for all platforms.'
+        description: 'Manual only: describe one video and outro naturally, or use custom: "Video.mp4"; outro: none for an instant entry. Codex interprets natural text during this run. Blank uses saved defaults. One shared outro for all platforms.'
         type: string
         required: false
       manual_schedule_action:
@@ -35,12 +35,16 @@ on:
 permissions:
   contents: read
 
+# Serialize account refresh and publishing across all three workflow entry points.
+concurrency:
+  group: easybosnian-publishing
+  cancel-in-progress: false
+
 jobs:
-  inspect:
+  run:
+    if: github.repository == 'TifahEfendijaM/Video-Publishing-Pipeline' && github.repository_id == '1407843658' && github.repository_owner_id == '50710040' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      requires_cloud: ${{ steps.inspect.outputs.requires_cloud }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,32 +52,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - id: inspect
-        run: npx tsx runner/src/main.ts inspect-input
-        env:
-          RUN_MODE: ${{ inputs.run_mode }}
-          PLAN_ACTION: ${{ inputs.plan_action }}
-          PUBLISHING_PLAN: ${{ inputs.publishing_plan }}
-          VIDEO_SELECTION: ${{ inputs.video_selection }}
-  prepare:
-    needs: inspect
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    concurrency:
-      group: ${{ needs.inspect.outputs.requires_cloud == 'true' && 'easybosnian-ai-preparation' || format('instant-input-{0}', github.run_id) }}
-      cancel-in-progress: false
-    outputs:
-      publishing_plan: ${{ steps.prepare.outputs.publishing_plan }}
-      video_selection: ${{ steps.prepare.outputs.video_selection }}
-      expected_plan_revision: ${{ steps.prepare.outputs.expected_plan_revision }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Prepare input without blocking scheduled uploads
+      - name: Install ffmpeg
+        if: inputs.run_mode == 'manual_now'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - name: Install subscription Codex CLI
+        if: inputs.run_mode == 'manual_now' || (inputs.plan_action == 'edit' && inputs.publishing_plan != '')
+        run: npm install --global @openai/codex@0.160.0
+      - name: Interpret and validate input on demand
         id: prepare
         run: npx tsx runner/src/main.ts prepare-input
         env:
@@ -88,32 +73,18 @@ jobs:
           GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
           GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
           CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
-  run:
-    needs: prepare
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    concurrency:
-      group: easybosnian-publishing
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Install ffmpeg
-        if: inputs.run_mode == 'manual_now'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          VIDEO_CODEX_AUTH_JSON: ${{ secrets.VIDEO_CODEX_AUTH_JSON }}
+          VIDEO_CODEX_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Run
         run: npx tsx runner/src/main.ts configure
         env:
           RUN_MODE: ${{ inputs.run_mode }}
           PLAN_ACTION: ${{ inputs.plan_action }}
-          PUBLISHING_PLAN: ${{ needs.prepare.outputs.publishing_plan }}
-          EXPECTED_PLAN_REVISION: ${{ needs.prepare.outputs.expected_plan_revision }}
+          PUBLISHING_PLAN: ${{ steps.prepare.outputs.publishing_plan }}
+          EXPECTED_PLAN_REVISION: ${{ steps.prepare.outputs.expected_plan_revision }}
           MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
-          VIDEO_SELECTION: ${{ needs.prepare.outputs.video_selection }}
+          VIDEO_SELECTION: ${{ steps.prepare.outputs.video_selection }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -135,3 +106,6 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
+          VIDEO_CODEX_AUTH_JSON: ${{ secrets.VIDEO_CODEX_AUTH_JSON }}
+          VIDEO_CODEX_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          GITHUB_TOKEN: ${{ github.token }}

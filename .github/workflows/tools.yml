@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "status | verify | preview | dispatch_test | publishing_enable | publishing_disable | reconcile | resolve_publication | retry_failed | plan_preview | manual_preview"
+        description: "status | verify | preview | dispatch_test | publishing_enable | publishing_disable | reconcile | resolve_publication | retry_failed | plan_preview | manual_preview | caption_preview"
         type: choice
         required: true
         default: status
-        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed, plan_preview, manual_preview]
+        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed, plan_preview, manual_preview, caption_preview]
       target:
-        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. plan_preview: paired weekly timetables and selection rules. manual_preview: one-off video and outro entry. Otherwise ignored."
+        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. plan_preview: paired weekly timetables and selection rules. manual_preview: one-off video and outro entry. caption_preview: exact video filename for an AI text preview. Otherwise ignored."
         type: string
         required: false
       resolution:
@@ -26,11 +26,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ (inputs.action == 'retry_failed' || inputs.action == 'reconcile' || inputs.action == 'resolve_publication') && 'easybosnian-publishing' || (inputs.action == 'plan_preview' || inputs.action == 'manual_preview') && 'easybosnian-ai-preparation' || format('tools-{0}', github.run_id) }}
+  group: ${{ (inputs.action == 'status' || inputs.action == 'dispatch_test' || inputs.action == 'verify' || inputs.action == 'publishing_enable' || inputs.action == 'publishing_disable') && format('tools-{0}', github.run_id) || 'easybosnian-publishing' }}
   cancel-in-progress: false
 
 jobs:
   run:
+    if: github.repository == 'TifahEfendijaM/Video-Publishing-Pipeline' && github.repository_id == '1407843658' && github.repository_owner_id == '50710040' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -40,6 +41,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install subscription Codex CLI
+        if: inputs.action == 'preview' || inputs.action == 'retry_failed' || inputs.action == 'plan_preview' || inputs.action == 'manual_preview' || inputs.action == 'caption_preview'
+        run: npm install --global @openai/codex@0.160.0
       - name: Install ffmpeg
         if: inputs.action == 'preview' || inputs.action == 'retry_failed'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
@@ -72,8 +76,11 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           CREDENTIALS_ENCRYPTION_KEY: ${{ secrets.CREDENTIALS_ENCRYPTION_KEY }}
-      - name: Upload private preview files
-        if: inputs.action == 'preview'
+          VIDEO_CODEX_AUTH_JSON: ${{ secrets.VIDEO_CODEX_AUTH_JSON }}
+          VIDEO_CODEX_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Upload preview files only for private repositories
+        if: inputs.action == 'preview' && github.event.repository.private == true
         uses: actions/upload-artifact@v4
         with:
           name: story-preview

@@ -1,7 +1,7 @@
 // Caption generation. Meaningless filenames use the stored generic caption (no model call).
-// Captions are in English. Meaningful filenames: a free Cloudflare Workers AI model writes a topic caption from the filename hint,
-// validated strictly; any failure falls back to the generic caption (reported), never to truncated or
-// unvalidated text. On the Workers FREE plan, usage above the daily free allocation is refused, not billed.
+// Captions are in English. Meaningful filenames use the configured model from the filename hint,
+// validated strictly. Model/text failures use reviewed generic copy; credential persistence failures
+// stop publishing. The optional legacy Workers AI provider uses the Workers free allocation.
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { WEBSITE_ENDING, analyzeFilename, validateCaptionSet, type CaptionSet, type FilenameAnalysis } from "../../src/shared/captions";
@@ -49,9 +49,11 @@ export interface CaptionModel {
   model: string;
   /** injectable for tests */
   run?: (system: string, user: string) => Promise<unknown>;
+  /** Credential persistence failures must stop publishing instead of using generic copy. */
+  isFatalError?: (error: unknown) => boolean;
 }
 
-const SCHEMA = {
+export const CAPTION_SCHEMA = {
   type: "object",
   properties: {
     topic_caption: { type: "string" },
@@ -60,6 +62,7 @@ const SCHEMA = {
     youtube_description: { type: "string" },
   },
   required: ["topic_caption", "website_invitation", "youtube_title", "youtube_description"],
+  additionalProperties: false,
 } as const;
 
 async function workersAi(m: CaptionModel, system: string, user: string): Promise<unknown> {
@@ -72,7 +75,7 @@ async function workersAi(m: CaptionModel, system: string, user: string): Promise
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      response_format: { type: "json_schema", json_schema: SCHEMA },
+      response_format: { type: "json_schema", json_schema: CAPTION_SCHEMA },
       max_tokens: 1200,
       temperature: 0.6,
     }),
@@ -131,6 +134,7 @@ export async function makeCaptions(filename: string, m: CaptionModel): Promise<C
       feedback = errs.join("; ");
       notes.push(`Caption attempt ${attempt} rejected: ${feedback}`);
     } catch (e) {
+      if (m.isFatalError?.(e)) throw e;
       notes.push(`Caption preparation/generation error (nothing is charged by this fallback): ${summarizeError(e, 200)}`);
       break;
     }
