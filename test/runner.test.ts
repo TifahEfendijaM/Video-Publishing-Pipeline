@@ -225,6 +225,25 @@ describe("Upload-Post adapter", () => {
   writeFileSync(file, Buffer.alloc(1024));
   const ok = async () => ({ allowed: true, reason: null });
 
+  it.each([
+    [{ status: "processing", results: [{ platform: "youtube", success: false }] }, "processing"],
+    [{ status: "completed", results: [{ platform: "youtube", success: false }] }, "uncertain"],
+    [{ status: "failed", message: "No activity for over 1 hour", results: [] }, "uncertain"],
+    [{ status: "failed", results: [{ platform: "youtube", success: false, url: "https://youtube.com/watch?v=abc", error: "conflicting result" }] }, "uncertain"],
+    [{ status: "completed", results: [{ platform: "youtube", success: true, post_url: "https://youtube.com/watch?v=abc", platform_post_id: "abc" }] }, "confirmed"],
+    [{ status: "failed", results: [{ platform: "youtube", success: false, error: "invalid video" }] }, "failed"],
+  ])("classifies provider results without treating an unknown outcome as safe to retry: %j", async (payload, status) => {
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify(payload), { status: 200 })) as any;
+    try {
+      const outcome = await new UploadPost("key", "easybosnian", 0).poll("request", 0);
+      expect(outcome.status).toBe(status);
+      if (status === "confirmed") expect(outcome.url).toBe("https://youtube.com/watch?v=abc");
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
   it("sends our own request ID and confirms via the status endpoint", async () => {
     const calls: { url: string; headers: any }[] = [];
     const real = globalThis.fetch;

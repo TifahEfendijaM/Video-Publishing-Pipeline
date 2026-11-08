@@ -31,7 +31,7 @@ Do not reuse that project's tokens; create new ones below.
 | 5 | **Buffer API key** (TikTok + YouTube Shorts) | publish.buffer.com/settings/api; Buffer → Channels → connect YouTube **@EasyBosnian** | Personal API key of the Buffer account where @easy.bosnian TikTok is connected. TikTok and YouTube (@EasyBosnian, for Shorts) must be connected in Buffer (free plan: 3 channels). | ⏳ you |
 | 5b | **Upload-Post** (YouTube regular videos) | app.upload-post.com → sign up (free, no card) → create a profile named `easybosnian` → connect YouTube as the **@EasyBosnian** channel → API Keys → create key | Free plan: 10 uploads/month. | ⏳ you |
 | 6 | **Cloudflare Workers AI token** (legacy alternative only) | Optional when explicitly selecting `cloudflare_workers_ai` instead of Codex CLI | Not required or called by the default `codex_cli` provider. Retain an existing token only if using that legacy provider. | optional |
-| 7 | **Cloudflare deploy token** | dash.cloudflare.com → My Profile → API Tokens → Create custom token | Account permissions: **Workers Scripts: Edit**, **D1: Edit**, **Workers KV Storage: Edit**; Account Resources: your account only. No payment method needed: temporary video hosting uses the free Workers KV (≤24 MB per video). R2 is optional and only for videos over 24 MB (R2 requires a card on file, so it is left off). | ⏳ you |
+| 7 | **Cloudflare deploy token** | dash.cloudflare.com → My Profile → API Tokens → Create custom token | Account permissions: **Workers Scripts: Edit**, **D1: Edit**, **Workers KV Storage: Edit**; Account Resources: your account only. No payment method needed: temporary video hosting uses free Workers KV (≤24 MB per hosted file); larger videos are automatically compressed without cutting their duration. Optional R2 can retain larger originals (R2 requires a card on file, so it is left off). | ⏳ you |
 | 8 | **GitHub dispatch token** for the Worker | github.com/settings/personal-access-tokens → Fine-grained | Resource owner TifahEfendijaM; **Only select repositories: Video-Publishing-Pipeline**; Repository permissions: **Actions: Read and write** (Metadata: read is automatic). Nothing else. Expiry: up to 1 year (calendar a renewal). | ⏳ you |
 
 ### Getting the YouTube refresh token (browser only, no local install)
@@ -89,7 +89,7 @@ Settings → Secrets and variables → Actions.
 | `UPLOAD_POST_API_KEY` | step 5b |
 | `CLOUDFLARE_AI_TOKEN` | Optional legacy provider only (Workers AI: Read) |
 | `VIDEO_CODEX_AUTH_JSON` | New dedicated video ChatGPT sign-in; seed only, refreshed state is encrypted in D1 |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | optional, only for videos over 24 MB |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | optional; oversized videos are compressed for free KV hosting when R2 is absent |
 
 **Variables**
 

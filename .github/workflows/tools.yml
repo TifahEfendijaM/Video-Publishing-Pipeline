@@ -21,6 +21,10 @@ on:
         required: false
         default: none
         options: [none, confirmed, failed]
+      destinations:
+        description: "retry_failed only: optional comma-separated destinations, e.g. instagram/feed,youtube/short,tiktok/feed. Blank retries all current failures/skips."
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -54,6 +58,7 @@ jobs:
           TOOL_ACTION: ${{ inputs.action }}
           TOOL_TARGET: ${{ inputs.target }}
           TOOL_RESOLUTION: ${{ inputs.resolution }}
+          TOOL_DESTINATIONS: ${{ inputs.destinations }}
           PREVIEW_DIR: ${{ github.workspace }}/preview
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}

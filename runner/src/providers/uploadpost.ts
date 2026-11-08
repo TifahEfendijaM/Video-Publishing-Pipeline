@@ -93,12 +93,20 @@ export class UploadPost {
         last = String(r.status ?? "unknown");
         const results: any[] = Array.isArray(r.results) ? r.results : r.results ? Object.entries(r.results).map(([platform, v]: any) => ({ platform, ...v })) : [];
         const yt = results.find((x) => (x.platform ?? "youtube") === "youtube") ?? null;
-        if (yt?.error || yt?.success === false) return { status: "failed", remoteId: requestId, detail: `Upload-Post/YouTube error: ${String(yt.error ?? yt.message ?? "unknown").slice(0, 250)}` };
-        if (yt?.url || yt?.video_id) {
-          const url = yt.url ?? `https://youtu.be/${yt.video_id}`;
-          return { status: "confirmed", remoteId: yt.video_id ?? requestId, url, detail: `published via Upload-Post (${last})` };
+        const pending = /^(pending|queued|processing|in_progress|retryable)$/.test(String(yt?.status ?? last));
+        const publication = yt?.url || yt?.post_url || yt?.video_id || (yt?.success === true && yt?.platform_post_id);
+        // Some in-progress responses carry success:false before a final result exists.
+        // Never turn that placeholder (or an unexplained terminal response) into a safe retry.
+        if (!pending && publication && yt?.success !== false && !yt?.error && !/fail|error/i.test(String(yt?.status ?? last))) {
+          const id = yt.video_id ?? yt.platform_post_id;
+          const url = yt.url ?? yt.post_url ?? `https://youtu.be/${id}`;
+          return { status: "confirmed", remoteId: id ?? requestId, url, detail: `published via Upload-Post (${last})` };
         }
-        if (/fail|error/i.test(last)) return { status: "failed", remoteId: requestId, detail: `Upload-Post status ${last}` };
+        if (!pending && yt?.error && !publication) return { status: "failed", remoteId: requestId, detail: `Upload-Post/YouTube error: ${String(yt.error).slice(0, 250)}` };
+        if (!pending && (yt?.success === false || /fail|error/i.test(last))) return {
+          status: "uncertain", remoteId: requestId,
+          detail: `Upload-Post status ${last} without definitive publication evidence; check YouTube and resolve manually before retrying.`,
+        };
       } catch (e) {
         if (e instanceof HttpStatusError && e.status === 404 && maxMinutes === 0) throw e;
       }
