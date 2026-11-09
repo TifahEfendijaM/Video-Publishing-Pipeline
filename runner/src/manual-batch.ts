@@ -39,6 +39,7 @@ export type BatchEntry = ReturnType<typeof resolveManualEntry> & { fileId: strin
 
 interface BatchDependencies {
   videos: FolderVideo[];
+  allowManualReupload?:boolean;
   jobs: Pick<ScheduledJob, 'remaining'>[];
   publications: (fileId: string) => Promise<{ status: string }[]>;
   stillInFolder: (fileId: string) => Promise<boolean>;
@@ -53,7 +54,7 @@ export async function preflightManualBatch(
   entries: Awaited<ReturnType<typeof interpretManualBatch>>,
   deps: BatchDependencies,
 ): Promise<BatchEntry[]> {
-  if (entries.length < 2) throw new Error('Batch preflight requires multiple entries');
+  if (!entries.length) throw new Error('Preflight requires at least one entry');
   const reserved = new Set(deps.jobs.flatMap(j => j.remaining.map(v => v.fileId)));
   const selected = new Set<string>();
   const resolved: BatchEntry[] = [];
@@ -87,8 +88,9 @@ export async function preflightManualBatch(
   }
   for (const id of new Set([...selected, ...assetIds])) {
     const rows = await deps.publications(id);
-    if (rows.some(p => p.status === 'confirmed' || mayBeLive(p.status as Parameters<typeof mayBeLive>[0])))
-      throw new Error(`"${deps.videos.find(v=>v.id===id)?.name ?? id}" has existing confirmed/live/pending publication checkpoints; reconcile or resolve before a new batch`);
+    const open=rows.some(p=>['initiated','processing','uncertain'].includes(p.status));
+    if (open || (rows.some(p => p.status === 'confirmed' || mayBeLive(p.status as Parameters<typeof mayBeLive>[0])) && !(deps.allowManualReupload && selected.has(id) && !assetIds.has(id))))
+      throw new Error(`"${deps.videos.find(v=>v.id===id)?.name ?? id}" has existing confirmed/live/pending publication checkpoints; reconcile active or uncertain uploads before requesting another upload`);
   }
   for(const entry of resolved) if(entry.thumbnailSec!=null) await deps.validateThumbnail?.(entry.fileId,entry.thumbnailSec);
   return resolved;

@@ -405,3 +405,12 @@ Unannotated filenames are automatic. Editing the timestamps retains list progres
 Applied routes: Instagram Reel cover timestamp; TikTok Buffer thumbnail offset; regular YouTube via Upload-Post custom JPEG; regular Facebook Page video preferred thumbnail. The current Buffer YouTube Shorts, Facebook Reels and Story routes keep their platform default cover; the run summary reports this limitation. Facebook thumbnail failures are reported separately from an already-confirmed video and never cause re-uploading.
 
 `manual_preview` validates/displays each entry and any explicit batch timestamps without sending videos or calling image inspection. Tools `preview` prepares media and inspects that video's candidate frames without publishing. Timestamped batches validate all explicit timestamps against Drive video-duration metadata before starting the first upload.
+
+
+## Manual re-uploads
+
+Explicitly selecting an exact source filename in a manual run requests a new upload. Earlier completed/failed publication records do not permanently block it: after whole-request validation, those terminal checkpoints are retained in audit history and cleared for the exact selected files. No extra dropdown or entry clause is needed. Current active, processing or uncertain uploads and scheduled reservations still require reconciliation first. Selecting FIFO/LIFO/random without an exact filename does not opt into re-uploading a previously published source. `manual_preview` stays read-only and does not reset records or publish.
+
+## Failure reports
+
+Failed preparation, preflight and publishing runs now write a **Video pipeline failure report** in the Actions summary and a downloadable **video-failure-report** artifact (7-day retention). It identifies the failing stage, redacted cause, whether any upload may have started, and recovery instructions. Earlier video results remain visible if a later batch video fails. Failed/skipped/pending destinations make the publishing job require attention even when another destination succeeds. Setup failures get a fallback report pointing to the failed step. Provider secrets and raw tokens are not included.

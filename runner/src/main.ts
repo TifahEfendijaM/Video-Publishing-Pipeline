@@ -1,3 +1,4 @@
+import { saveFailureReport } from './failure-report';
 import { chooseThumbnail, extractThumbnail, validateThumbnailDuration } from './thumbnails';
 import { interpretManualBatch, preflightManualBatch, type BatchEntry } from "./manual-batch";
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
@@ -33,6 +34,7 @@ import { planFeed, planStory, planYouTubeVersions } from "../../src/shared/media
 import { redact, summarizeError } from "../../src/shared/redact";
 import { selectRetryPublications } from "./retry";
 
+let providerExecutionStarted=false;
 const sec = secrets();
 const cfg = loadConfig();
 const env = (n: string) => (process.env[n] ?? "").trim();
@@ -433,6 +435,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     }
 
     const host = hosting((note) => s.p(note));
+    providerExecutionStarted=true;
     const { results, hostedKeys } = await executeTasks(o.runId, v.id, tasks, {
       mayPublish: (id) => o.state.mayPublish(id),
       record: async (r) => {
@@ -457,6 +460,12 @@ async function publishFlow(o: PublishOpts): Promise<string> {
 }
 
 function reportResults(s: Summary, results: TaskResult[]) {
+  const failures=results.filter(r=>r.status!=='confirmed' && r.status!=='unsupported');
+  if(failures.length) {
+    saveFailureReport(new Error(failures.map(r=>`${r.platform}/${r.surface}: ${r.status}: ${r.detail ?? 'needs attention'}`).join('; ')),'publication results',providerExecutionStarted);
+    process.exitCode=1;
+  }
+
   s.h(2, "Publication results");
   s.table(
     ["Platform", "Surface", "Format", "Provider", "Status", "Link / ID", "Detail"],
@@ -478,12 +487,12 @@ function reportResults(s: Summary, results: TaskResult[]) {
 // ---------------------------------------------------------------------------
 // Commands
 
-async function batchPreflight(state: StateClient, parsed: Awaited<ReturnType<typeof interpretManualBatch>>) {
+async function batchPreflight(state: StateClient, parsed: Awaited<ReturnType<typeof interpretManualBatch>>, allowManualReupload=false) {
   const d = await drive();
   const [videos, plan, snapshot] = await Promise.all([d.listVideos(),state.plan(),state.state()]);
   const savedOutros = snapshot.settings.outros ?? {};
   const entries = await preflightManualBatch(parsed, {
-    videos, jobs: plan.entries, savedOutros, defaultOutroFilename: cfg.outros?.defaultFileName ?? '',
+    videos, jobs: plan.entries, allowManualReupload, savedOutros, defaultOutroFilename: cfg.outros?.defaultFileName ?? '',
     planOutros: [...Object.values(plan.outros), ...plan.entries.flatMap(j=>Object.values(j.outros))],
     publications: async fileId => (await state.publications({fileId})).publications,
     stillInFolder: id=>d.stillInFolder(id),
@@ -530,6 +539,13 @@ async function cmdConfigure() {
   s.h(1, `EasyBosnian video — ${mode}`);
   if (mode === "manual_now") {
     const manualEntries = selection.trim() ? await interpretManualBatch(selection, model) : [await interpretManualEntry(selection,model)];
+    // Explicit exact-file selections are a request for another upload. Old terminal
+    // checkpoints are recovery state, not a permanent ban on publishing that file.
+    if(manualEntries.every(e=>e.selection?.policy==='custom')) {
+      const checked=await batchPreflight(state,manualEntries,true);
+      const reset=await state.prepareManualReupload(checked.entries.map(e=>e.fileId),actor);
+      if(reset.cleared) s.p(`Prepared these exact source files for a new manual upload; archived ${reset.cleared} earlier terminal checkpoint(s) in the audit history. Saved plan and list progress retained.`);
+    }
     const isBatch = manualEntries.length > 1;
     // Validate all entries (and current state) before starting any individual video.
     const checked = isBatch ? await batchPreflight(state,manualEntries) : null;
@@ -740,8 +756,8 @@ async function cmdTools() {
   } else if (action === "manual_preview") {
     const entries=target.trim() ? await interpretManualBatch(await flexiblePreview('batch',target),selectionModel()) : [await interpretManualEntry('',selectionModel())];
     if (entries.length > 1) {
-      const checked=await batchPreflight(state,entries);
-      s.p('Read-only manual batch preview: preflight checked all filenames, outro assets, reservations and checkpoints. No publishing, archival, runs or plan changes.');
+      const checked=await batchPreflight(state,entries,true);
+      s.p('Read-only manual batch preview: preflight checked all filenames, outro assets, reservations and checkpoints. No publishing, archival, runs or plan changes. Earlier terminal records would be prepared for re-upload only by the actual exact-file manual run.');
       s.table(['Video','Destinations','Outros','Thumbnail'],checked.entries.map(e=>[e.fileName,destinationDescription(e.destinations),outroDescription(e.outroOverrides).replace(/^; /,'') || 'saved default',e.thumbnailSec==null ? 'automatic for this video' : `${e.thumbnailSec}s`]));
       console.log(JSON.stringify({preview:'batch',entries:checked.entries.map(e=>({fileName:e.fileName,destinations:e.destinations,outros:e.outroOverrides,thumbnailSec:e.thumbnailSec})),saved:false,published:false}));
     } else {
@@ -796,7 +812,7 @@ async function cmdTools() {
 function readOnly(state: StateClient): StateClient {
   return new Proxy(state, {
     get(target, prop, recv) {
-      if (["completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "changePlan", "configureAutomated", "setPublishing"].includes(String(prop))) {
+      if (["prepareManualReupload", "completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "changePlan", "configureAutomated", "setPublishing"].includes(String(prop))) {
         return async () => {
           throw new Error(`preview is read-only (${String(prop)})`);
         };
@@ -941,6 +957,7 @@ if (!handlers[cmd]) {
   process.exit(2);
 }
 handlers[cmd]().catch((e) => {
+  saveFailureReport(e,cmd,providerExecutionStarted,env("VIDEO_SELECTION") || env("PUBLISHING_PLAN") || env("TOOL_TARGET"));
   console.error(`ERROR: ${summarizeError(e, 500)}`);
   process.exit(1);
 });

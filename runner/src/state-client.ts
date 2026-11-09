@@ -55,6 +55,9 @@ export class StateClient {
   completeVideo(fileId: string) {
     return this.call("POST", "/api/videos/complete", { fileId });
   }
+  prepareManualReupload(fileIds:string[],actor:string) {
+    return this.call<{ok:boolean;files:number;cleared:number}>('POST','/api/publications/manual-reupload',{fileIds,actor,intent:'explicit_manual_reupload'});
+  }
   checkpointFiles() {
     return this.call<{ fileIds: string[] }>("GET", "/api/publications/files");
   }
