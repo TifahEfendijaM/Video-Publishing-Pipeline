@@ -1,3 +1,4 @@
+import { parseThumbnailTime } from '../../src/shared/thumbnail';
 import { interpretVideoRule } from './video-rule';
 import type { CaptionModel } from './captioner';
 import { parseCustomList, resolveCustomList, type CustomVideo, type TitleRule, type JobPolicy } from '../../src/shared/job-selection';
@@ -7,11 +8,22 @@ import { parseTimetable, formatTimetable } from '../../src/shared/timetable';
 import type { FolderVideo } from '../../src/shared/selection';
 import { parseDestinations, validateDestinations, type Destination } from '../../src/shared/destinations';
 
-export interface SelectionEntry { policy: JobPolicy; titleRule: TitleRule | null; filenames: string[]; outroNames?: Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook',string|null>>; destinations?: Destination[] }
+export interface SelectionEntry { policy: JobPolicy; titleRule: TitleRule | null; filenames: string[]; thumbnailTimes?: (number | null)[]; outroNames?: Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook',string|null>>; destinations?: Destination[] }
 export async function interpretSelection(text: string, model: CaptionModel): Promise<SelectionEntry> {
   const value = text.trim();
   const custom = /^(?:custom|(?:publish\s+)?(?:this\s+)?list(?:\s+in\s+order)?)\s*:\s*([\s\S]+)$/i.exec(value);
-  if (custom) return { policy: 'custom', titleRule: null, filenames: parseCustomList(custom[1]) };
+  if (custom) {
+    const items = splitOutsideQuotes(custom[1], c=>c===',');
+    const parsed = items.map(item => {
+      const parts=splitOutsideQuotes(item,c=>c==='@');
+      if(parts.length>2) throw new Error('Only one thumbnail timestamp per filename');
+      const name=parts[0];
+      const names = parseCustomList(name);
+      if(names.length!==1) throw new Error('One filename per thumbnail choice');
+      return {name:names[0],seconds:parts.length===2 ? parseThumbnailTime(parts[1]) : null};
+    });
+    return {policy:'custom',titleRule:null,filenames:parsed.map(p=>p.name),thumbnailTimes:parsed.map(p=>p.seconds)};
+  }
   const aliases: Record<string,'fifo'|'lifo'|'random'> = { fifo:'fifo', 'oldest video first':'fifo', 'oldest first':'fifo', lifo:'lifo', 'newest video first':'lifo', 'newest first':'lifo', random:'random', 'random video':'random' };
   if (aliases[value.toLowerCase()]) return { policy: aliases[value.toLowerCase()], titleRule: null, filenames: [] };
   const literal = /^(fifo|lifo|random) video whose title (contains|starts with|ends with) (".*")$/i.exec(value);
@@ -35,7 +47,8 @@ export async function interpretPlan(text: string, model: CaptionModel) {
     if (!delimiter) throw new Error('Pair each timetable with a rule: Monday at 06:00: newest video first');
     const slots = parseTimetable(line.slice(0,delimiter.index));
     if (!slots) throw new Error('Each rule needs a timetable');
-    const {rule,outroNames,destinations} = parseOutroClauses(line.slice(delimiter.index+delimiter[0].length));
+    const {rule,outroNames,destinations,thumbnailSec} = parseOutroClauses(line.slice(delimiter.index+delimiter[0].length));
+    if(thumbnailSec !== undefined) throw new Error('For a scheduled Custom list, attach each thumbnail to its filename: \"Video.mp4\" @ 00:12');
     const selection = await interpretSelection(rule,model);
     entries.push({...selection,scheduleText:formatTimetable(slots),destinations, ...(Object.keys(outroNames).length ? {outroNames} : {})});
   }
@@ -67,7 +80,7 @@ export function resolvePlan(entries: (SelectionEntry & {scheduleText:string})[],
     if(entry.policy==='custom') {
       // Resubmitting an unchanged list can include already archived filenames. Preserve its identity.
       const prior = saved.find(j=>JSON.stringify(j.originalCustom.map(v=>v.fileName.normalize('NFC')))===JSON.stringify(entry.filenames));
-      custom = prior?.originalCustom ?? resolveCustomList(entry.filenames.map(n=>`"${n.replace(/"/g,'""')}"`).join(','),videos);
+      custom = (prior?.originalCustom ?? resolveCustomList(entry.filenames.map(n=>`"${n.replace(/"/g,'""')}"`).join(','),videos)).map(({thumbnailSec,...v},i)=>({...v,...(entry.thumbnailTimes?.[i] != null ? {thumbnailSec:entry.thumbnailTimes[i]} : {})}));
     }
     const outros=resolveOutroChoices(entry.outroNames ?? {},videos);
     return {scheduleText:entry.scheduleText,policy:entry.policy,titleRule:entry.titleRule,custom,destinations:validateDestinations(entry.destinations), ...(entry.outroNames ? {outros} : {})};
@@ -78,7 +91,14 @@ function parseOutroClauses(text:string, perPlatform=true) {
     const [rule, ...clauses] = splitOutsideQuotes(text, c=>c===';');
     const outroNames: NonNullable<SelectionEntry['outroNames']> = {};
     let destinations: Destination[] | undefined;
+    let thumbnailSec: number | null | undefined;
     for (const clause of clauses) {
+      const thumbnail = /^thumbnail\s*:\s*(.*)$/i.exec(clause);
+      if (thumbnail) {
+        if (thumbnailSec !== undefined) throw new Error('Specify thumbnail only once');
+        thumbnailSec = parseThumbnailTime(thumbnail[1]);
+        continue;
+      }
       const targets = /^destinations\s*:\s*(.+)$/i.exec(clause);
       if (targets) {
         if (destinations) throw new Error('Specify destinations only once per entry');
@@ -97,11 +117,12 @@ function parseOutroClauses(text:string, perPlatform=true) {
         outroNames[platform as keyof typeof outroNames] = name;
       }
     }
-  return {rule,outroNames,destinations:validateDestinations(destinations)};
+  return {rule,outroNames,destinations:validateDestinations(destinations),thumbnailSec};
 }
 
 export async function interpretRuleEntry(text: string, model: CaptionModel) {
-  const { rule, outroNames, destinations } = parseOutroClauses(text);
+  const { rule, outroNames, destinations, thumbnailSec } = parseOutroClauses(text);
+  if(thumbnailSec!==undefined) throw new Error('Rule previews do not take a shared thumbnail timestamp');
   if (Object.keys(outroNames).length) throw new Error('Rule previews support selection and destinations, without outros');
   return { ...await interpretSelection(rule, model), destinations };
 }
@@ -109,10 +130,11 @@ export async function interpretRuleEntry(text: string, model: CaptionModel) {
 export async function interpretManualEntry(text:string, model:CaptionModel) {
   if (text.length>2000) throw new Error('Manual entry is too long (max 2000 characters)');
   if (!text.trim()) return {selection:null,outroNames:{},destinations:validateDestinations()};
-  const {rule,outroNames,destinations}=parseOutroClauses(text,false);
+  const {rule,outroNames,destinations,thumbnailSec}=parseOutroClauses(text,false);
   const selection=rule && rule.toLowerCase()!=='default' ? await interpretSelection(rule,model) : null;
   if (selection?.policy==='custom' && selection.filenames.length!==1) throw new Error('A one-off upload takes exactly one Custom filename');
-  return {selection,outroNames,destinations};
+  if(thumbnailSec!==undefined && selection?.thumbnailTimes?.some(t=>t!==null)) throw new Error('Specify the thumbnail timestamp once');
+  return {selection,outroNames,destinations,thumbnailSec:thumbnailSec ?? selection?.thumbnailTimes?.[0]};
 }
 
 export function resolveManualEntry(parsed:Awaited<ReturnType<typeof interpretManualEntry>>, videos:FolderVideo[]) {
@@ -123,7 +145,7 @@ export function resolveManualEntry(parsed:Awaited<ReturnType<typeof interpretMan
     pendingCustom={fileId:match.video.id,fileName:match.video.name};
   }
   const outros=resolveOutroChoices(parsed.outroNames,videos);
-  return {pendingCustom,outroOverrides:outros, destinations:parsed.destinations, titleRule:parsed.selection?.titleRule,
+  return {pendingCustom,outroOverrides:outros, thumbnailSec:parsed.thumbnailSec, destinations:parsed.destinations, titleRule:parsed.selection?.titleRule,
     policyChoice:parsed.selection ? parsed.selection.titleRule?.order ?? (parsed.selection.policy==='custom' ? null : parsed.selection.policy as 'fifo'|'lifo'|'random') : null};
 }
 

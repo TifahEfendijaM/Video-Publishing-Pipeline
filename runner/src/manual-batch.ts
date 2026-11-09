@@ -42,6 +42,7 @@ interface BatchDependencies {
   jobs: Pick<ScheduledJob, 'remaining'>[];
   publications: (fileId: string) => Promise<{ status: string }[]>;
   stillInFolder: (fileId: string) => Promise<boolean>;
+  validateThumbnail?: (fileId:string,seconds:number)=>Promise<void>;
   savedOutros?: Record<string, { fileId: string; fileName: string } | null>;
   planOutros?: ({ fileId: string; fileName: string } | null)[];
   defaultOutroFilename?: string;
@@ -89,5 +90,6 @@ export async function preflightManualBatch(
     if (rows.some(p => p.status === 'confirmed' || mayBeLive(p.status as Parameters<typeof mayBeLive>[0])))
       throw new Error(`"${deps.videos.find(v=>v.id===id)?.name ?? id}" has existing confirmed/live/pending publication checkpoints; reconcile or resolve before a new batch`);
   }
+  for(const entry of resolved) if(entry.thumbnailSec!=null) await deps.validateThumbnail?.(entry.fileId,entry.thumbnailSec);
   return resolved;
 }

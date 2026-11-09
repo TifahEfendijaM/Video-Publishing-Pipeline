@@ -22,7 +22,7 @@ on:
         type: string
         required: false
       video_selection:
-        description: 'Manual only: describe one video or multiple exact filenames separated by |, each with its own destinations and outro. Example: "Video.mp4" publish only as a Short on YouTube, without an outro. Codex interprets natural text. Omitted destinations mean all platforms and both YouTube versions. Blank uses saved selection/outro defaults. Per-entry shared outro. Batches keep schedule unchanged.'
+        description: 'Manual only: describe one video or multiple exact filenames separated by |, each with its own destinations and outro. Example: "Video.mp4" publish only as a Short on YouTube, without an outro. Codex interprets natural text. Omitted destinations mean all platforms and both YouTube versions. Per-video thumbnail: 00:18.5; omit for automatic visual choice. Blank uses saved selection/outro defaults. Per-entry shared outro. Batches keep schedule unchanged.'
         type: string
         required: false
       manual_schedule_action:

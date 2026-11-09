@@ -388,3 +388,20 @@ custom: "Lesson One.mp4"; destinations: youtube/short; outro: none | custom: "Le
 Batch preflight resolves every exact filename and explicit outro, rejects duplicates, scheduled Custom reservations, missing/ambiguous or non-video files, overlap between source videos and outro assets, and existing confirmed or possibly-live publication checkpoints. It checks Drive folder membership before any publishing begins. A failure aborts the entire batch before allocating per-video runs. During execution, videos are published sequentially, each with its own durable run ID and publication recovery records. Successful uploads must **not** be replayed; use **Pipeline tools → reconcile**, **resolve_publication**, or **retry_failed** with the affected run ID and destination. Reused outro files stay in the source folder and are not independently selected for publication.
 
 For a read-only validation, use **Actions → Pipeline tools → manual_preview** with the same text in `target`. It previews the whole batch's resolved filenames, destinations and outro choices without uploading, archiving, allocating publishing runs, or modifying the saved plan. The original single-video manual behavior remains available. Batch runs deliberately require `keep_schedule`; scheduled publishing is unaffected.
+
+
+## Per-video thumbnail selection
+
+Manual entries and each line of a manual batch accept `; thumbnail: 00:18.5` (MM:SS, HH:MM:SS or seconds). This refers to the main clip before an appended outro. Omit it, leave it blank, or use `thumbnail: auto` for Codex visual selection from up to twelve sampled frames of that specific video. No choice or image is shared between videos or cached for an entire job. A timestamp outside the main clip is rejected; an invalid automatic model selection stops before uploads for that video. Automatic inspection uses the dedicated existing Codex subscription sign-in, no paid API key, and consumes account usage.
+
+For a scheduled Custom list use a timestamp after the corresponding filename:
+
+```
+Sun 18:00: custom: "First.mp4" @ 00:12, "Second.mp4" @ auto; outro: none
+```
+
+Unannotated filenames are automatic. Editing the timestamps retains list progress and already completed videos. A shared scheduled `thumbnail:` clause is rejected to prevent accidental reuse across a list. Deploy the updated Worker before saving timestamps in a scheduled list. No database migration is needed: the choice travels with that video's existing saved JSON item.
+
+Applied routes: Instagram Reel cover timestamp; TikTok Buffer thumbnail offset; regular YouTube via Upload-Post custom JPEG; regular Facebook Page video preferred thumbnail. The current Buffer YouTube Shorts, Facebook Reels and Story routes keep their platform default cover; the run summary reports this limitation. Facebook thumbnail failures are reported separately from an already-confirmed video and never cause re-uploading.
+
+`manual_preview` validates/displays each entry and any explicit batch timestamps without sending videos or calling image inspection. Tools `preview` prepares media and inspects that video's candidate frames without publishing. Timestamped batches validate all explicit timestamps against Drive video-duration metadata before starting the first upload.

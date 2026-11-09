@@ -50,7 +50,7 @@ export interface BufferPlan {
   createArgsOk: boolean;
   problems: string[];
   mutation: string;
-  buildInput: (o: { channelId: string; text: string; videoUrl: string; youtube?: { title: string; categoryId: string; madeForKids: boolean } }) => Record<string, unknown>;
+  buildInput: (o: { channelId: string; text: string; videoUrl: string; thumbnailOffset?: number; youtube?: { title: string; categoryId: string; madeForKids: boolean } }) => Record<string, unknown>;
   postQuery: string;
   postVars: (id: string) => Record<string, unknown>;
   summary: string;
@@ -183,7 +183,12 @@ export class Buffer {
       postVars,
       buildInput: (o) => {
         const inp: Record<string, unknown> = { channelId: o.channelId, text: o.text, schedulingType: "automatic", mode: "shareNow" };
-        inp.assets = assetShape === "videos" ? { videos: [{ url: o.videoUrl }] } : [{ video: { url: o.videoUrl } }];
+        const video:Record<string,unknown>={url:o.videoUrl};
+        if(o.thumbnailOffset!==undefined) {
+          if(!Number.isInteger(o.thumbnailOffset) || o.thumbnailOffset<0 || o.youtube) throw new SafeFailure('Thumbnail offsets are supported for TikTok, not the YouTube Buffer route');
+          video.metadata={thumbnailOffset:o.thumbnailOffset};
+        }
+        inp.assets = assetShape === "videos" ? { videos: [video] } : [{ video }];
         if (o.youtube) {
           if (!ytFields.has("title")) throw new SafeFailure("Buffer schema has no YouTube title field");
           const y: Record<string, unknown> = { title: o.youtube.title };
@@ -236,7 +241,7 @@ export class Buffer {
     }
   }
 
-  async publish(o: { channelId: string; text: string; videoUrl: string; youtube?: { title: string; categoryId: string; madeForKids: boolean } }, gate: Gate, progress: Progress): Promise<Outcome> {
+  async publish(o: { channelId: string; text: string; videoUrl: string; thumbnailOffset?: number; youtube?: { title: string; categoryId: string; madeForKids: boolean } }, gate: Gate, progress: Progress): Promise<Outcome> {
     let plan: BufferPlan;
     try {
       plan = await this.discover();

@@ -42,7 +42,7 @@ export class UploadPost {
     }
   }
 
-  async upload(path: string, meta: { title: string; description: string; categoryId: string; madeForKids: boolean }, gate: Gate, progress: Progress): Promise<Outcome> {
+  async upload(path: string, meta: { title: string; description: string; categoryId: string; madeForKids: boolean; thumbnailPath?: string }, gate: Gate, progress: Progress): Promise<Outcome> {
     const requestId = randomUUID();
     const form = new FormData();
     form.set("user", this.profile);
@@ -54,6 +54,7 @@ export class UploadPost {
     form.set("selfDeclaredMadeForKids", String(meta.madeForKids));
     form.set("async_upload", "true");
     form.set("request_id", requestId);
+    if(meta.thumbnailPath) form.set("thumbnail", await openAsBlob(meta.thumbnailPath,{type:"image/jpeg"}), "thumbnail.jpg");
     form.set("video", await openAsBlob(path, { type: "video/mp4" }), "video.mp4");
     const g = await gate();
     if (!g.allowed) return { status: "disabled", detail: `Not sent to Upload-Post: ${g.reason}` };

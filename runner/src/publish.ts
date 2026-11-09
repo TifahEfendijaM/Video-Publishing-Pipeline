@@ -181,6 +181,7 @@ export function buildTasks(o: {
   /** per-platform feed file (the video with that platform's outro appended), default: original */
   feedPaths?: Partial<Record<"instagram" | "facebook" | "tiktok", string>>;
   destinations?: Destination[];
+  thumbnail?: {seconds:number; youtubePath?:string; facebookPath?:string};
 }): Task[] {
   const { cfg, feed, stories, originalPath, captions, providers, identities } = o;
   const igPath = o.feedPaths?.instagram ?? originalPath;
@@ -205,7 +206,7 @@ export function buildTasks(o: {
       mediaPath: igPath,
       needsUrl: true,
       blocked: identityBlock(identities.instagram) ?? (!feed.instagram.check.ok ? { status: "unsupported", detail: `Source incompatible with Instagram Reels: ${feed.instagram.check.problems.join("; ")}. Not uploaded.` } : undefined) ?? (!providers.meta ? { status: "disabled", detail: "META_PAGE_ACCESS_TOKEN not configured" } : undefined),
-      run: (c) => providers.meta!.instagram(d.instagram.expectedUserId, "REELS", c.url!, captions.caption, c.gate, c.progress),
+      run: (c) => providers.meta!.instagram(d.instagram.expectedUserId, "REELS", c.url!, captions.caption, c.gate, c.progress, o.thumbnail?.seconds),
     });
   }
   if (d.instagram.enabled && d.instagram.story) {
@@ -232,10 +233,16 @@ export function buildTasks(o: {
       mediaPath: fbPath,
       needsUrl: false,
       blocked: identityBlock(identities.facebook) ?? (!feed.facebook.check.ok ? { status: "unsupported", detail: `Source incompatible with Facebook: ${feed.facebook.check.problems.join("; ")}. Not uploaded.` } : undefined) ?? (!providers.meta ? { status: "disabled", detail: "META_PAGE_ACCESS_TOKEN not configured" } : undefined),
-      run: (c) =>
-        feed.facebook.format === "reel"
+      run: async (c) => {
+        const result=await (feed.facebook.format === "reel"
           ? providers.meta!.facebookReel(d.facebook.expectedPageId, fbPath, captions.caption, c.gate, c.progress)
-          : providers.meta!.facebookPageVideo(d.facebook.expectedPageId, fbPath, captions.youtubeTitle, captions.caption, c.gate, c.progress),
+          : providers.meta!.facebookPageVideo(d.facebook.expectedPageId, fbPath, captions.youtubeTitle, captions.caption, c.gate, c.progress));
+        if(feed.facebook.format==='page_video' && o.thumbnail?.facebookPath && result.status==='confirmed' && result.remoteId) {
+          try { await providers.meta!.facebookThumbnail(result.remoteId,o.thumbnail.facebookPath); }
+          catch(e) { return {...result,detail:`${result.detail ?? 'Published'}; thumbnail needs attention: ${summarizeError(e,150)}. Do not re-upload the video.`}; }
+        }
+        return result;
+      },
     });
     if (d.facebook.story) {
       for (const s of storySurfaces) {
@@ -262,7 +269,7 @@ export function buildTasks(o: {
       mediaPath: ttPath,
       needsUrl: true,
       blocked: identityBlock(identities.tiktok) ?? (!feed.tiktok.check.ok ? { status: "unsupported", detail: `Source incompatible with TikTok: ${feed.tiktok.check.problems.join("; ")}. Not uploaded.` } : undefined) ?? (!providers.buffer ? { status: "disabled", detail: "BUFFER_API_KEY not configured" } : undefined),
-      run: (c) => providers.buffer!.publish({ channelId: d.tiktok.expectedBufferChannelId, text: captions.caption, videoUrl: c.url! }, c.gate, c.progress),
+      run: (c) => providers.buffer!.publish({ channelId: d.tiktok.expectedBufferChannelId, text: captions.caption, videoUrl: c.url!, thumbnailOffset:o.thumbnail ? Math.round(o.thumbnail.seconds*1000) : undefined }, c.gate, c.progress),
     });
     tasks.push({
       platform: "tiktok",
@@ -286,7 +293,7 @@ function youtubeTasks(o: Parameters<typeof buildTasks>[0]): Task[] {
   const y = cfg.destinations.youtube;
   const yp = o.youtube ?? { plan: undefined as unknown as YouTubeVersions, shortPath: null, regularPath: null };
   const tasks: Task[] = [];
-  const meta = { title: captions.youtubeTitle, description: captions.youtubeDescription, categoryId: y.categoryId, madeForKids: y.madeForKids };
+  const meta = { title: captions.youtubeTitle, description: captions.youtubeDescription, categoryId: y.categoryId, madeForKids: y.madeForKids, thumbnailPath:o.thumbnail?.youtubePath };
 
   // Short — Buffer (public, Shorts only)
   if (y.short.enabled) {
