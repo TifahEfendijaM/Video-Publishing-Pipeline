@@ -32,7 +32,7 @@ import { Summary, statusLabel } from "./summary";
 import { NO_ELIGIBLE_MESSAGE, selectVideo, type FolderVideo, type SelectionPolicy } from "../../src/shared/selection";
 import { planFeed, planStory, planYouTubeVersions } from "../../src/shared/media";
 import { redact, summarizeError } from "../../src/shared/redact";
-import { selectRetryPublications } from "./retry";
+import { findRetryVideo, selectRetryPublications } from "./retry";
 
 let providerExecutionStarted=false;
 const sec = secrets();
@@ -115,8 +115,8 @@ async function drive(): Promise<Drive> {
   return new Drive(await serviceAccountToken(sa, DRIVE_SCOPES), cfg.driveFolderId, archiveOptions());
 }
 
-function queueDeps(d: Drive, state: StateClient) {
-  return { publications: async (fileId: string) => (await state.publications({ fileId })).publications,
+function queueDeps(d: Drive, state: StateClient, partialArchiveSupported=false) {
+  return { partialArchiveSupported, publications: async (fileId: string) => (await state.publications({ fileId })).publications,
     archive: (fileId: string) => d.archive(fileId), complete: (fileId: string) => state.completeVideo(fileId) };
 }
 
@@ -134,7 +134,7 @@ async function cleanupFolder(s: Summary, state: StateClient) {
     const outro = effectiveOutro(saved[p], videos, cfg.outros?.defaultFileName ?? "");
     if (outro) protectedIds.add(outro.fileId);
   }
-  const q = await maintainQueue(videos, protectedIds, queueDeps(d, state));
+  const q = await maintainQueue(videos, protectedIds, queueDeps(d, state,!!plan.features?.majorityArchiveRecovery));
   if (q.notes.length) { s.h(2, "Drive source cleanup"); s.list(q.notes); }
 }
 
@@ -144,7 +144,8 @@ async function recoverArchived(d: Drive, state: StateClient, s: Summary) {
   const folder = await d.publishedFolder(false);
   if (!folder) return;
   const archived = new Set((await d.listVideos(folder.id)).map((v) => v.id));
-  const count = await completeArchived(archived, fileIds, queueDeps(d, state));
+  const capabilities=await state.plan();
+  const count = await completeArchived(archived, fileIds, queueDeps(d, state,!!capabilities.features?.majorityArchiveRecovery));
   if (count) s.p(`Cleared recovery checkpoints for ${count} source(s) already in Published videos.`);
 }
 
@@ -258,12 +259,11 @@ async function publishFlow(o: PublishOpts): Promise<string> {
   for (const outro of Object.values(savedOutros)) if (outro) excludeIds.add(outro.fileId);
   for (const outro of Object.values(plan.outros)) if (outro) excludeIds.add(outro.fileId);
   for (const job of jobs) for (const outro of Object.values(job.outros)) if (outro) excludeIds.add(outro.fileId);
-  const queue = await maintainQueue(folder.videos, excludeIds, queueDeps(d, o.state), !!o.preview);
+  const queue = await maintainQueue(folder.videos, excludeIds, queueDeps(d, o.state,!!plan.features?.majorityArchiveRecovery), !!o.preview);
   const candidates = (o.job?.titleRule ?? o.titleRule) ? folder.videos.filter((v) => matchesTitle(v.name, (o.job?.titleRule ?? o.titleRule)!)) : folder.videos;
   let sel;
   if (o.forcedFileId) {
-    const v = folder.videos.find((x) => x.id === o.forcedFileId);
-    if (!v || !await d.stillInFolder(v.id)) throw new Error(`Video ${o.forcedFileId} is no longer in the folder; cannot retry.`);
+    const v = await findRetryVideo(o.forcedFileId, folder.videos, d);
     sel = { ...selectVideo({ policy: o.policy, pendingCustomFileId: v.id, pendingCustomFileName: v.name, videos: [v] }), method: "retry" as const };
   } else {
     sel = selectVideo({ policy: o.policy, customName: o.customName, pendingCustomFileId: o.pendingCustom?.fileId, pendingCustomFileName: o.pendingCustom?.fileName, videos: candidates, excludeIds, reservedIds, strictCustom: !!o.job || !!o.pendingCustom, blockedIds: queue.blockedIds });
@@ -444,7 +444,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
       host: host ? (p) => host.put(p) : undefined,
       log: (m) => console.log(redact(m)),
     });
-    const cleanup = await maintainQueue([v], excludeIds, queueDeps(d, o.state));
+    const cleanup = await maintainQueue([v], excludeIds, queueDeps(d, o.state,!!plan.features?.majorityArchiveRecovery));
     if (cleanup.notes.length) { s.h(2, "Drive source cleanup"); s.list(cleanup.notes); }
     // Keep hosted media only while a URL-fetching provider may still need it (lifecycle rule deletes it anyway).
     const urlPending = results.some((r) => (r.provider === "buffer" || r.platform === "instagram") && (r.status === "processing" || r.status === "initiated" || r.status === "uncertain"));
@@ -452,7 +452,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
 
     reportResults(s, results);
     const status = results.every((r) => r.status === "confirmed" || r.status === "unsupported") ? "completed" : results.some((r) => r.status === "confirmed") ? "partial" : "not_published";
-    await o.state.finishRun({ runId: o.runId, status, selectedFileId: cleanup.archivedIds.has(v.id) ? undefined : v.id, selectedFileName: cleanup.archivedIds.has(v.id) ? undefined : v.name, selectionMethod: sel.method, selectionNote: sel.fallback ?? undefined });
+    await o.state.finishRun({ runId: o.runId, status, selectedFileId: cleanup.clearedIds.has(v.id) ? undefined : v.id, selectedFileName: cleanup.clearedIds.has(v.id) ? undefined : v.name, selectionMethod: sel.method, selectionNote: sel.fallback ?? undefined });
     return status;
   } finally {
     rmSync(work, { recursive: true, force: true });

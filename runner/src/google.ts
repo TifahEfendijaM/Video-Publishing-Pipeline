@@ -173,10 +173,10 @@ export class Drive {
   }
 
   /** Is the file still directly in the folder and not trashed? */
-  async stillInFolder(fileId: string): Promise<boolean> {
+  async stillInFolder(fileId: string, folderId=this.folderId): Promise<boolean> {
     try {
       const f = await json<any>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,trashed,parents&supportsAllDrives=true`, { label: "drive file", headers: this.h() });
-      return !f.trashed && (f.parents ?? []).includes(this.folderId);
+      return !f.trashed && (f.parents ?? []).includes(folderId);
     } catch (e) {
       if (e instanceof HttpStatusError && e.status === 404) return false;
       throw e;

@@ -11,22 +11,13 @@ export interface PublicationCheckpoint {
   status: PublicationStatus;
 }
 
-/** A retry replaces only its own destination, preserving the other destinations' outcomes. */
-export function latestPublications<T extends PublicationCheckpoint>(rows: T[]): T[] {
-  const latest = new Map<string, T>();
-  for (const p of rows) {
-    const key = `${p.platform}:${p.surface}`;
-    if (!latest.has(key) || latest.get(key)!.id < p.id) latest.set(key, p);
-  }
-  return [...latest.values()];
-}
-
-export function confirmedForCleanup(rows: PublicationCheckpoint[]): boolean {
-  const latest = latestPublications(rows);
-  return latest.some((p) => p.status === "confirmed") && latest.every((p) => p.status === "confirmed" || p.status === "unsupported");
-}
+import { latestOutcomes, fullyConfirmed, majorityConfirmed, platformPublicationCounts } from '../../src/shared/archive-policy';
+export { latestOutcomes as latestPublications } from '../../src/shared/archive-policy';
+export const confirmedForCleanup=fullyConfirmed;
+const latestPublications=latestOutcomes;
 
 export interface QueueDeps {
+  partialArchiveSupported?:boolean;
   publications(fileId: string): Promise<PublicationCheckpoint[]>;
   archive(fileId: string): Promise<void>;
   complete(fileId: string): Promise<unknown>;
@@ -36,34 +27,47 @@ export interface QueueDeps {
 export async function completeArchived(archivedIds: Set<string>, checkpointIds: string[], deps: QueueDeps): Promise<number> {
   let completed = 0;
   for (const id of checkpointIds) {
-    if (archivedIds.has(id) && confirmedForCleanup(await deps.publications(id))) {
+    if(!archivedIds.has(id)) continue;
+    const rows=await deps.publications(id);
+    const final=confirmedForCleanup(rows);
+    if(final || (deps.partialArchiveSupported && majorityConfirmed(rows))) {
       await deps.complete(id);
-      completed++;
+      if(final) completed++;
     }
   }
   return completed;
 }
 
-/** Retry cleanup without republishing; retain partial/pending sources for explicit recovery. */
+/** Archive confirmed platform majorities without discarding partial recovery state. */
 export async function maintainQueue(videos: FolderVideo[], protectedIds: Set<string>, deps: QueueDeps, preview = false) {
   const blockedIds = new Set<string>();
   const notes: string[] = [];
   const archivedIds = new Set<string>();
+  const clearedIds = new Set<string>();
   for (const v of videos) {
     if (protectedIds.has(v.id) || isOutroName(v.name)) continue;
     // Fail closed on state errors: a missing checkpoint response is not an unpublished video.
     const rows = latestPublications(await deps.publications(v.id));
-    if (confirmedForCleanup(rows)) {
+    if (majorityConfirmed(rows)) {
+      const final=confirmedForCleanup(rows);
+      const counts=platformPublicationCounts(rows);
       blockedIds.add(v.id);
+      if(!final && !deps.partialArchiveSupported) {
+        notes.push(`"${v.name}" has a confirmed platform majority, but the scheduler must be deployed before partial recovery records can safely be retained.`);
+        continue;
+      }
       if (preview) {
-        notes.push(`"${v.name}" is confirmed and awaiting Drive cleanup (preview does not remove files).`);
+        notes.push(`"${v.name}" has a confirmed platform majority and is awaiting Drive cleanup (preview does not remove files).`);
         continue;
       }
       try {
         await deps.archive(v.id);
         await deps.complete(v.id);
         archivedIds.add(v.id);
-        notes.push(`"${v.name}" moved from the source folder into Published videos after confirmed publishing; recovery checkpoints cleared.`);
+        if(final) {
+          clearedIds.add(v.id);
+          notes.push(`"${v.name}" moved from the source folder into Published videos after confirmed publishing; recovery checkpoints cleared.`);
+        } else notes.push(`"${v.name}" moved into Published videos: ${counts.confirmed} confirmed platform(s) outnumber ${counts.unconfirmed} unconfirmed platform(s). Recovery checkpoints retained; reconcile pending uploads or retry only failed destinations.`);
       } catch (e) {
         notes.push(`WARNING: cleanup of "${v.name}" needs attention: ${summarizeError(e, 200)}. It will not be republished; cleanup will be retried on the next publishing run or Tools → reconcile.`);
       }
@@ -72,5 +76,5 @@ export async function maintainQueue(videos: FolderVideo[], protectedIds: Set<str
       notes.push(`"${v.name}" retained for pending/partial publishing; use reconcile, resolve_publication or retry_failed. It will not be republished automatically.`);
     }
   }
-  return { blockedIds, archivedIds, notes };
+  return { blockedIds, archivedIds, clearedIds, notes };
 }

@@ -1,3 +1,4 @@
+import { fullyConfirmed, type PublicationOutcome } from '../../src/shared/archive-policy';
 import { advanceCustomJobs, dispatchJobs, jobById, listJobs, validBatch } from "./jobs";
 import { planState, setPlanPaused } from './plan-state';
 import type { SelectionPolicy } from "../../src/shared/selection";
@@ -402,6 +403,8 @@ const STATUSES = new Set(["initiated", "processing", "confirmed", "failed", "unc
 export async function completeVideo(db: Db, fileId: string) {
   if (!fileId) throw new HttpError(400, "fileId required");
   await advanceCustomJobs(db, fileId);
+  const rows=(await db.prepare("SELECT * FROM publications WHERE file_id = ? ORDER BY id").bind(fileId).all<PublicationOutcome>()).results;
+  if(rows.length && !fullyConfirmed(rows)) return {ok:true,retainedCheckpoints:true};
   await db.prepare("UPDATE runs SET selected_file_id = NULL, selected_file_name = NULL, selection_note = NULL WHERE selected_file_id = ?").bind(fileId).run();
   await db.prepare("DELETE FROM publications WHERE file_id = ?").bind(fileId).run();
   return { ok: true };
