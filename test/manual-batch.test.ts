@@ -12,7 +12,7 @@ const files=[
 ];
 const input='custom: "One.mp4"; destinations: youtube/short; outro: none | custom: "Two.mp4"; destinations: instagram/reel, youtube/video; outro: "Ending.mp4"';
 const dependencies=()=>({
-  videos:files,
+  videos:files.map(v=>({...v})),
   jobs:[] as {remaining:{fileId:string;fileName:string}[]}[],
   publications:vi.fn(async(_id:string)=>[] as {status:string}[]),
   stillInFolder:vi.fn(async(_id:string)=>true),
