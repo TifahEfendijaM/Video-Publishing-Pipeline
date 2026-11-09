@@ -2,7 +2,7 @@ import { interpretManualEntry, resolveManualEntry } from './publishing-plan';
 import type { CaptionModel } from './captioner';
 import type { FolderVideo } from '../../src/shared/selection';
 import type { ScheduledJob } from '../../worker/src/jobs';
-import { isVideo } from '../../src/shared/selection';
+import { effectiveOutro, isVideo } from '../../src/shared/selection';
 import { mayBeLive } from '../../src/shared/status';
 
 /** Batch delimiters are newline and |, except inside quoted filenames. */
@@ -42,6 +42,9 @@ interface BatchDependencies {
   jobs: Pick<ScheduledJob, 'remaining'>[];
   publications: (fileId: string) => Promise<{ status: string }[]>;
   stillInFolder: (fileId: string) => Promise<boolean>;
+  savedOutros?: Record<string, { fileId: string; fileName: string } | null>;
+  planOutros?: ({ fileId: string; fileName: string } | null)[];
+  defaultOutroFilename?: string;
 }
 
 /** Fail closed on the whole batch before any run is created or provider is called. */
@@ -67,6 +70,12 @@ export async function preflightManualBatch(
     resolved.push({ ...item, fileId, fileName });
   }
   const assetIds = new Set<string>(resolved.flatMap(e => Object.values(e.outroOverrides).flatMap(v => v ? [v.fileId] : [])));
+  for (const entry of resolved) for (const platform of ['youtube','tiktok','instagram','facebook']) {
+    const saved = platform in entry.outroOverrides ? entry.outroOverrides[platform] : deps.savedOutros?.[platform];
+    const outro = effectiveOutro(saved, deps.videos, deps.defaultOutroFilename ?? '');
+    if (outro) assetIds.add(outro.fileId);
+  }
+  for (const outro of deps.planOutros ?? []) if (outro) assetIds.add(outro.fileId);
   for (const assetId of assetIds) {
     const asset = deps.videos.find(v => v.id === assetId);
     if (!asset || !isVideo(asset)) throw new Error('Batch outro is not a video asset');
