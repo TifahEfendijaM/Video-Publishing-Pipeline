@@ -12,7 +12,7 @@ on:
         default: status
         options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed, plan_preview, manual_preview, caption_preview]
       target:
-        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. plan_preview: paired weekly timetables and selection rules. manual_preview: one-off video and outro entry. caption_preview: exact video filename for an AI text preview. Otherwise ignored."
+        description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. plan_preview: paired weekly timetables and selection rules. manual_preview: single video or batch separated by |, each with destinations/outro; checks sources without publishing. caption_preview: exact video filename for an AI text preview. Otherwise ignored."
         type: string
         required: false
       resolution:

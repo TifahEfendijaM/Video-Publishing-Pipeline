@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       run_mode:
-        description: "automated = Edit/Pause/Resume the publishing plan; never publishes immediately. manual_now = publish one video now."
+        description: "automated = Edit/Pause/Resume the publishing plan; never publishes immediately. manual_now = publish one video or a validated batch now."
         type: choice
         required: true
         options: [automated, manual_now]
@@ -22,7 +22,7 @@ on:
         type: string
         required: false
       video_selection:
-        description: 'Manual only: describe a video, destinations and outro. Example: "Video.mp4" publish only as a Short on YouTube, without an outro. Codex interprets natural text. Omitted destinations mean all platforms and both YouTube versions. Blank uses saved selection/outro defaults. One shared outro.'
+        description: 'Manual only: describe one video or multiple exact filenames separated by |, each with its own destinations and outro. Example: "Video.mp4" publish only as a Short on YouTube, without an outro. Codex interprets natural text. Omitted destinations mean all platforms and both YouTube versions. Blank uses saved selection/outro defaults. Per-entry shared outro. Batches keep schedule unchanged.'
         type: string
         required: false
       manual_schedule_action:

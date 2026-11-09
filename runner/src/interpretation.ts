@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
+import { interpretManualBatch } from './manual-batch';
 import { interpretPlan, interpretManualEntry, interpretRuleEntry } from './publishing-plan';
 import type { CaptionModel } from './captioner';
 
-export type InterpretationKind = 'plan' | 'manual' | 'rule';
+export type InterpretationKind = 'plan' | 'manual' | 'batch' | 'rule';
 export const noModel: CaptionModel = {model:'deterministic validation', run:async()=>{throw new Error('This entry requires AI interpretation');}};
 const Response = z.object({status:z.enum(['ready','needs_clarification']), normalized:z.string().max(16000).nullable(), explanation:z.string().min(1).max(2000)}).strict();
 export const INTERPRETATION_SCHEMA = {
@@ -16,13 +17,14 @@ export async function validateNormalized(kind: InterpretationKind, text: string)
   if (!text.trim()) throw new Error('AI returned an empty interpretation');
   if (kind === 'plan') await interpretPlan(text, noModel);
   else if (kind === 'manual') await interpretManualEntry(text, noModel);
+  else if (kind === 'batch') await interpretManualBatch(text, noModel);
   else await interpretRuleEntry(text, noModel);
 }
 
 export interface InterpretationContext { savedPlan: string; filenames: string[]; referenceTime: string }
 /** Formatted entries skip AI. The model interprets natural text; code validates all resulting rules. */
 export async function flexibleInterpretation(kind: InterpretationKind, text: string, model: CaptionModel, context:()=>Promise<InterpretationContext>): Promise<string> {
-  if (!text.trim() || text.length > (kind === 'manual' ? 2000 : 16000)) throw new Error('Entry is empty or too long');
+  if (!text.trim() || text.length > (kind === 'manual' ? 2000 : kind === 'batch' ? 8000 : 16000)) throw new Error('Entry is empty or too long');
   try { await validateNormalized(kind, text); return text; } catch { /* Natural entry below. */ }
   if (!model.run) throw new Error('On-demand interpretation is not configured');
   const system = readFileSync(new URL('../prompts/interpretation.md', import.meta.url), 'utf8');
