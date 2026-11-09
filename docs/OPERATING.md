@@ -118,8 +118,9 @@ queued scheduled occurrences and prevents further publishing steps in running sc
 already submitted to a platform cannot necessarily be recalled. **Resume** continues at the next future
 slot; paused or missed occurrences are not backfilled. Pause/Resume ignore the text and outro fields.
 
-A Custom list publishes one item per occurrence and advances only after confirmed archival. Partial,
-uncertain or missing files keep the head in place; the list never falls back to an unrelated video.
+A Custom list publishes one item per occurrence and advances only after a confirmed Drive move,
+including a move after a confirmed platform majority. Without that majority, partial, uncertain or
+missing files keep the head in place; the list never falls back to an unrelated video.
 An empty list completes. Title-filter and automatic selections continue waiting for future eligible
 uploads when none remain. Exact-list videos are reserved from other plan entries and manual selections.
 Outros are excluded from automatic rules and cannot be scheduled as standalone Custom items; deliberate
@@ -262,20 +263,24 @@ Weekly, every-N-days recurring, or dated one-time, Europe/Sarajevo time (summer/
 
 - The live source folder is the queue. FIFO/LIFO chooses by Drive upload/creation date; Random chooses
   uniformly from eligible sources; Custom chooses a filename. No permanent consumed-video table is used.
-- After every supported destination confirms publication, the source moves into **Published videos**,
-  and its temporary publication checkpoints and saved file references in run records are cleared.
-  Unsupported/manual-only surfaces
-  (such as TikTok Stories) do not block cleanup; there must be at least one confirmed publication.
-  Outro clips (by name or saved/configured ID) are retained.
-- Processing, uncertain, failed or skipped destinations prevent cleanup. If any destination may already be
-  live, its source is temporarily excluded from automatic **and custom** publication to prevent duplicates.
-  Other queued videos can advance. Recovery tools use per-destination checkpoints, rather than a permanent
-  publishing-history cursor. Scheduler/run statuses remain for troubleshooting, with archived file details cleared.
-- Cleanup failure is reported in the summary. The confirmed video cannot be re-uploaded accidentally;
-  cleanup is retried before the next publishing run or via **Tools → reconcile**, even if there are no open
-  publications. Reconcile and manual resolution also archive sources whose last pending destination confirms.
-  If the move succeeded but checkpoint deletion failed, a later publishing run/reconcile clears those
-  records after finding the source in the archive; the video is never re-uploaded.
+- A source moves into **Published videos** when confirmed platforms strictly outnumber failed,
+  skipped or unconfirmed platforms. Each platform counts once and confirms only when all its selected,
+  supported surfaces confirm. Multiple Story segments do not add votes. Unsupported/manual-only
+  surfaces (such as TikTok Stories) are excluded. A tie, no confirmations or an all-unsupported plan
+  leaves the source in place. Outro clips (by name or saved/configured ID) are retained.
+- A majority move advances a scheduled Custom list but preserves all recovery checkpoints and saved
+  run file references while any supported outcome remains unresolved. The run still reports partial
+  publication and failures. If every supported destination confirms, temporary checkpoints and file
+  references are cleared as before.
+- If any destination may already be live, its source remains excluded from automatic **and custom**
+  publication to prevent duplicates. Recovery tools use per-destination checkpoints, rather than a
+  permanent publishing-history cursor. **Tools → retry_failed** can read a source from either the main
+  folder or Published videos and retries only the selected current failed/skipped destinations.
+- Cleanup failure is reported in the summary. Cleanup is retried before the next publishing run or via
+  **Tools → reconcile**, including when there are no open publications. Reconcile and manual resolution
+  apply the same majority rule. If a move succeeds but the state response is lost, later recovery finds
+  the archived file, advances its Custom list idempotently and retains unresolved outcomes. Once all
+  supported destinations confirm, it clears the temporary checkpoints without republishing.
 - When no eligible source remains, the run reports **"No eligible videos available."** and publishes nothing.
 - Every destination is attempted independently. Facebook failing doesn't stop Instagram, TikTok or YouTube.
 - **Failed** means nothing was published there; `retry_failed` re-attempts only those, never the ones

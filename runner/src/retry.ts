@@ -14,3 +14,15 @@ export function selectRetryPublications<T extends PublicationCheckpoint>(run: T[
   }
   return eligible.filter((p) => requested.has(`${p.platform}/${p.surface}`));
 }
+
+/** Recovery may follow a majority move, including one made earlier in this same run. */
+export async function findRetryVideo(fileId: string, sourceVideos: import("../../src/shared/selection").FolderVideo[], drive: Pick<import("./google").Drive, "stillInFolder" | "publishedFolder" | "listVideos">) {
+  const source = sourceVideos.find(v => v.id === fileId);
+  if (source && await drive.stillInFolder(fileId)) return source;
+  const archive = await drive.publishedFolder(false);
+  if (archive) {
+    const video = (await drive.listVideos(archive.id)).find(v => v.id === fileId);
+    if (video && await drive.stillInFolder(fileId, archive.id)) return video;
+  }
+  throw new Error(`Video ${fileId} is no longer in the source or Published videos folder; cannot retry.`);
+}

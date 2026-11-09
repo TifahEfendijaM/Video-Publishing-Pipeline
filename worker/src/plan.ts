@@ -13,7 +13,7 @@ export interface PlanChange {
 
 export async function planView(db: Db, nowMs: number) {
   const meta = await planState(db);
-  return { features: { destinationSelection: true, perVideoThumbnails: true }, paused: !!meta.paused, revision: meta.revision, outros: JSON.parse(meta.outros_json) as Outros, updatedAt: meta.updated_at, entries: await listJobs(db, nowMs) };
+  return { features: { destinationSelection: true, perVideoThumbnails: true, majorityArchiveRecovery: true }, paused: !!meta.paused, revision: meta.revision, outros: JSON.parse(meta.outros_json) as Outros, updatedAt: meta.updated_at, entries: await listJobs(db, nowMs) };
 }
 
 /** Replace the whole plan atomically, preserving progress by unchanged selection identity. */

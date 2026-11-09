@@ -5,8 +5,10 @@ Instagram (Reel + Story), Facebook (Reel or Page video + Story), TikTok (video p
 YouTube (a regular video via Upload-Post and a Short via Buffer for every clip), using one editable Europe/Sarajevo publishing plan or on demand. Manual entries and individual scheduled rules can choose platforms and YouTube formats in natural language; omitted choices publish everywhere.
 Separate from the image-card pipeline: no shared code, Worker, database or credentials.
 
-The source Drive folder is the publishing queue: confirmed sources move into **Published videos**,
-then their temporary recovery checkpoints and saved file references are cleared. FIFO/LIFO uses Drive
+The source Drive folder is the publishing queue: sources move into **Published videos** when confirmed
+platforms outnumber failed, skipped or unconfirmed platforms. A tie stays in the source folder; each
+platform counts once and must confirm all its selected supported surfaces. Partial uploads retain their
+recovery checkpoints and run file references; fully confirmed uploads clear them. FIFO/LIFO uses Drive
 upload dates, Random picks an eligible source, and Custom matches a filename. Partial/pending uploads
 stay protected from duplicates, and outro assets remain in place. The old consumed-video/entry-time table
 is removed. [Archive access and migration setup](docs/SETUP.md#drive-access-for-automatic-archival).
