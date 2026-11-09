@@ -73,12 +73,12 @@ async function cmdPrepareInput() {
   let expectedRevision='';
   if(cfg.captions.provider==='codex_cli') {
     const kind=mode==='manual_now' ? 'batch' : action==='edit' && planText ? 'plan' : null;
-    const text=kind==='manual' ? manualText : planText;
+    const text=kind==='batch' ? manualText : planText;
     if(kind && text) {
       const saved=await stateClient().plan();
       if(kind==='plan') expectedRevision=String(saved.revision);
       const normalized=await normalizeInput(kind,text,saved);
-      if(kind==='manual') manualText=normalized; else planText=normalized;
+      if(kind==='batch') manualText=normalized; else planText=normalized;
       s.p('Interpreted input was validated. The next step checks current filenames and saves/applies it.');
       s.code(normalized);
     }
