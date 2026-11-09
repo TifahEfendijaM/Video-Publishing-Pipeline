@@ -480,7 +480,7 @@ async function publishManualBatch(entries: BatchEntry[], state: StateClient, s: 
         outroOverrides:entry.outroOverrides,destinations:entry.destinations,summary:s,state,
       });
       s.p(`Video result: **${status}**. Recover by this run ID; do not replay the successful batch entries.`);
-      if (!['completed','no_eligible_video'].includes(status)) failures++;
+      if (status !== 'completed') failures++;
     } catch (e) {
       failures++;
       s.p(`Video error: ${summarizeError(e)}. Inspect this run's durable checkpoints before retrying.`);
@@ -709,7 +709,7 @@ async function cmdTools() {
     s.code(captions.caption).code(captions.youtubeTitle).code(captions.youtubeDescription);
     s.list(captions.notes);
   } else if (action === "manual_preview") {
-    const entries=await interpretManualBatch(await flexiblePreview('batch',target),selectionModel());
+    const entries=target.trim() ? await interpretManualBatch(await flexiblePreview('batch',target),selectionModel()) : [await interpretManualEntry('',selectionModel())];
     if (entries.length > 1) {
       const checked=await batchPreflight(state,entries);
       s.p('Read-only manual batch preview: preflight checked all filenames, outro assets, reservations and checkpoints. No publishing, archival, runs or plan changes.');
