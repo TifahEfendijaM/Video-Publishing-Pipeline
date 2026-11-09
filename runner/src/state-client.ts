@@ -55,8 +55,8 @@ export class StateClient {
   completeVideo(fileId: string) {
     return this.call("POST", "/api/videos/complete", { fileId });
   }
-  resetDeletedPublications(fileIds:string[],actor:string) {
-    return this.call<{ok:boolean;files:number;cleared:number}>('POST','/api/publications/reset-deleted',{fileIds,actor,acknowledgement:'previous_posts_deleted'});
+  prepareManualReupload(fileIds:string[],actor:string) {
+    return this.call<{ok:boolean;files:number;cleared:number}>('POST','/api/publications/manual-reupload',{fileIds,actor,intent:'explicit_manual_reupload'});
   }
   checkpointFiles() {
     return this.call<{ fileIds: string[] }>("GET", "/api/publications/files");

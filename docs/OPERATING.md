@@ -407,11 +407,9 @@ Applied routes: Instagram Reel cover timestamp; TikTok Buffer thumbnail offset; 
 `manual_preview` validates/displays each entry and any explicit batch timestamps without sending videos or calling image inspection. Tools `preview` prepares media and inspects that video's candidate frames without publishing. Timestamped batches validate all explicit timestamps against Drive video-duration metadata before starting the first upload.
 
 
-## Fresh uploads after deleting earlier posts
+## Manual re-uploads
 
-Normal manual runs (`manual_publication_action: protect_existing`) keep duplicate protection. If you deleted the previous platform posts and want a new upload, choose **fresh_after_deleting**. It requires exact Custom filenames, validates the entire batch and its assets first, then explicitly resets only those files' old checkpoints. It preserves the publishing plan, Custom-list progress, Drive files and earlier run reports. The reset is audited. Existing processing/uncertain outcomes or active runs must be reconciled/resolved first; a deleted visible post does not prove a queued upload was cancelled.
-
-To prepare those same files without publishing, use **Pipeline tools → reset_deleted**, put the exact manual entry/batch in target, and check **previous_posts_deleted**. Then rerun with the default protect_existing mode. Never use the fresh option for videos whose prior posts are still live. Re-running a genuinely failed destination uses retry_failed instead.
+Explicitly selecting an exact source filename in a manual run requests a new upload. Earlier completed/failed publication records do not permanently block it: after whole-request validation, those terminal checkpoints are retained in audit history and cleared for the exact selected files. No extra dropdown or entry clause is needed. Current active, processing or uncertain uploads and scheduled reservations still require reconciliation first. Selecting FIFO/LIFO/random without an exact filename does not opt into re-uploading a previously published source. `manual_preview` stays read-only and does not reset records or publish.
 
 ## Failure reports
 

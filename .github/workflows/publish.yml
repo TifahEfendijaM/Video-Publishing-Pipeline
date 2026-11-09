@@ -32,13 +32,6 @@ on:
         default: keep_schedule
         options: [keep_schedule, pause_schedule]
 
-      manual_publication_action:
-        description: "protect_existing prevents duplicates. fresh_after_deleting starts over for exact filenames ONLY after you deleted earlier platform posts; refuses unresolved uploads."
-        type: choice
-        required: true
-        default: protect_existing
-        options: [protect_existing, fresh_after_deleting]
-
 permissions:
   contents: read
 
@@ -91,7 +84,6 @@ jobs:
           PUBLISHING_PLAN: ${{ steps.prepare.outputs.publishing_plan }}
           EXPECTED_PLAN_REVISION: ${{ steps.prepare.outputs.expected_plan_revision }}
           MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
-          MANUAL_PUBLICATION_ACTION: ${{ inputs.manual_publication_action }}
           VIDEO_SELECTION: ${{ steps.prepare.outputs.video_selection }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}

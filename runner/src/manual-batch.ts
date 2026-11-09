@@ -39,7 +39,7 @@ export type BatchEntry = ReturnType<typeof resolveManualEntry> & { fileId: strin
 
 interface BatchDependencies {
   videos: FolderVideo[];
-  allowDeletedSources?:boolean;
+  allowManualReupload?:boolean;
   jobs: Pick<ScheduledJob, 'remaining'>[];
   publications: (fileId: string) => Promise<{ status: string }[]>;
   stillInFolder: (fileId: string) => Promise<boolean>;
@@ -88,8 +88,9 @@ export async function preflightManualBatch(
   }
   for (const id of new Set([...selected, ...assetIds])) {
     const rows = await deps.publications(id);
-    if (rows.some(p => p.status === 'confirmed' || mayBeLive(p.status as Parameters<typeof mayBeLive>[0])) && !(deps.allowDeletedSources && selected.has(id) && !assetIds.has(id)))
-      throw new Error(`"${deps.videos.find(v=>v.id===id)?.name ?? id}" has existing confirmed/live/pending publication checkpoints; use retry_failed for missing destinations, or fresh_after_deleting only after deleting previous platform posts`);
+    const open=rows.some(p=>['initiated','processing','uncertain'].includes(p.status));
+    if (open || (rows.some(p => p.status === 'confirmed' || mayBeLive(p.status as Parameters<typeof mayBeLive>[0])) && !(deps.allowManualReupload && selected.has(id) && !assetIds.has(id))))
+      throw new Error(`"${deps.videos.find(v=>v.id===id)?.name ?? id}" has existing confirmed/live/pending publication checkpoints; reconcile active or uncertain uploads before requesting another upload`);
   }
   for(const entry of resolved) if(entry.thumbnailSec!=null) await deps.validateThumbnail?.(entry.fileId,entry.thumbnailSec);
   return resolved;
