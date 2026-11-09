@@ -183,6 +183,13 @@ export class Drive {
     }
   }
 
+  async durationSec(fileId:string):Promise<number> {
+    const r=await json<any>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=videoMediaMetadata(durationMillis)&supportsAllDrives=true`,{label:'drive video duration',headers:this.h()});
+    const duration=Number(r.videoMediaMetadata?.durationMillis)/1000;
+    if(!Number.isFinite(duration)||duration<=0) throw new Error('Drive has not supplied a duration for the timestamped batch video; try again after Drive processes it');
+    return duration;
+  }
+
   async download(fileId: string, dest: string): Promise<void> {
     const res = await request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, {
       label: "drive download",

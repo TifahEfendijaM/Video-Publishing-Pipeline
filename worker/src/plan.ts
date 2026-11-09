@@ -13,7 +13,7 @@ export interface PlanChange {
 
 export async function planView(db: Db, nowMs: number) {
   const meta = await planState(db);
-  return { features: { destinationSelection: true }, paused: !!meta.paused, revision: meta.revision, outros: JSON.parse(meta.outros_json) as Outros, updatedAt: meta.updated_at, entries: await listJobs(db, nowMs) };
+  return { features: { destinationSelection: true, perVideoThumbnails: true }, paused: !!meta.paused, revision: meta.revision, outros: JSON.parse(meta.outros_json) as Outros, updatedAt: meta.updated_at, entries: await listJobs(db, nowMs) };
 }
 
 /** Replace the whole plan atomically, preserving progress by unchanged selection identity. */
@@ -49,7 +49,7 @@ export async function changePlan(db: Db, request: PlanChange, nowMs: number) {
     const candidates = old.filter(j => !used.has(j.id) && selectionKey({policy: j.policy, custom: j.policy === 'custom' ? j.originalCustom : [], titleRule: j.titleRule}) === key);
     const prior = candidates.find(j => j.scheduleText === entry.scheduleText) ?? (candidates.length === 1 ? candidates[0] : undefined);
     if (prior) used.add(prior.id);
-    const remaining = prior ? prior.remaining : entry.custom;
+    const remaining = prior ? prior.remaining.map(v => ({...v, thumbnailSec: entry.custom.find(c => c.fileId === v.fileId)?.thumbnailSec})) : entry.custom;
     const outroSource = old.find(j => j.scheduleText === entry.scheduleText) ?? prior;
     return { entry, prior, remaining, position: index, id: prior?.id ?? randomToken().slice(0,24), name: `Plan entry ${index+1}`, outros: {...outroSource?.outros, ...entry.outros} };
   });

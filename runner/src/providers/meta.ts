@@ -1,6 +1,6 @@
 // Meta Graph API: Instagram Reels/Stories and Facebook Page Reels/Stories/videos.
 // One Page access token (from a Business system user, non-expiring) covers the Page and its linked Instagram account.
-import { openSync, readSync, closeSync, statSync, readFileSync } from "node:fs";
+import { openSync, readSync, closeSync, statSync, readFileSync, openAsBlob } from "node:fs";
 import { HttpStatusError, NetworkError, json, request, sleep } from "../http";
 import { AmbiguousOutcome, SafeFailure } from "../../../src/shared/status";
 import { summarizeError } from "../../../src/shared/redact";
@@ -54,6 +54,14 @@ export class Meta {
       body: new URLSearchParams(params),
       timeoutMs: 120_000,
     });
+  }
+
+  async facebookThumbnail(videoId:string,path:string):Promise<void> {
+    const form=new FormData();
+    form.set('source',await openAsBlob(path,{type:'image/jpeg'}),'thumbnail.jpg');
+    form.set('is_preferred','true');
+    const result=await json<{success?:boolean}>(this.url(`${encodeURIComponent(videoId)}/thumbnails`),{label:'facebook video thumbnail',method:'POST',headers:this.h(),body:form});
+    if(result.success!==true) throw new Error('Facebook did not confirm the preferred video thumbnail');
   }
 
   // ------------------------------------------------------------------ verification
@@ -115,10 +123,11 @@ export class Meta {
 
   // ------------------------------------------------------------------ Instagram
 
-  async instagram(igUserId: string, kind: "REELS" | "STORIES", videoUrl: string, caption: string | null, gate: Gate, progress: Progress): Promise<Outcome> {
+  async instagram(igUserId: string, kind: "REELS" | "STORIES", videoUrl: string, caption: string | null, gate: Gate, progress: Progress, thumbnailSec?: number): Promise<Outcome> {
     const params: Record<string, string> = { media_type: kind, video_url: videoUrl };
     if (kind === "REELS") {
       params.share_to_feed = "true";
+      if(thumbnailSec!==undefined) params.thumb_offset=String(Math.round(thumbnailSec*1000));
       if (caption) params.caption = caption;
     }
     let container: string;

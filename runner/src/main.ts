@@ -1,3 +1,4 @@
+import { chooseThumbnail, extractThumbnail, validateThumbnailDuration } from './thumbnails';
 import { interpretManualBatch, preflightManualBatch, type BatchEntry } from "./manual-batch";
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
@@ -211,7 +212,8 @@ interface PublishOpts {
   scheduledLocal?: string;
   policy: SelectionPolicy;
   customName?: string | null;
-  pendingCustom?: { fileId: string; fileName: string | null } | null;
+  pendingCustom?: { fileId: string; fileName: string | null; thumbnailSec?: number | null } | null;
+  thumbnailSec?: number | null;
   forcedFileId?: string;
   filter?: Set<string>;
   preview?: boolean;
@@ -397,7 +399,31 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     const identitySelected = (key: string) => key === 'youtubeBuffer' ? destinations.includes('youtube/short') : key.startsWith('youtube') ? destinations.includes('youtube/video') : destinations.some(d => d.startsWith(`${key}/`));
     s.table(["Destination", "Verified", "Detail"], Object.entries(ids).filter(([k]) => identitySelected(k)).map(([k, c]) => [k, c.ok ? "✅" : "❌", c.detail]));
 
-    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube, destinations, feedPaths: { instagram: bases.instagram.path, facebook: bases.facebook.path, tiktok: bases.tiktok.path } });
+    const requestedThumbnail=o.thumbnailSec ?? o.pendingCustom?.thumbnailSec;
+    if(requestedThumbnail!=null) validateThumbnailDuration(requestedThumbnail,info.durationSec);
+    const hasThumbnailRoute=(destinations.includes('youtube/video') && cfg.destinations.youtube.enabled && !!prov.uploadPost && ids.youtubeUploadPost.ok)
+      || (destinations.includes('instagram/reel') && cfg.destinations.instagram.enabled && !!prov.meta && ids.instagram.ok)
+      || (destinations.includes('tiktok/feed') && cfg.destinations.tiktok.enabled && !!prov.buffer && ids.tiktok.ok)
+      || (destinations.includes('facebook/feed') && feed.facebook.format==='page_video' && cfg.destinations.facebook.enabled && !!prov.meta && ids.facebook.ok);
+    let thumbnail:{seconds:number;youtubePath?:string;facebookPath?:string}|undefined;
+    if(hasThumbnailRoute) {
+      const picked=await chooseThumbnail({source:original,duration:info.durationSec,filename:v.name,work,seconds:requestedThumbnail,
+        inspect:(system,user,schema,images)=>codexClient().run(system,user,schema,cfg.captions.model,images)});
+      thumbnail={seconds:picked.seconds};
+      if(destinations.includes('youtube/video') && prov.uploadPost && ids.youtubeUploadPost.ok) {
+        thumbnail.youtubePath=join(work,'youtube_thumbnail.jpg');
+        await extractThumbnail(youtube.regularPath ?? bases.youtube.path,thumbnail.youtubePath,picked.seconds);
+      }
+      if(destinations.includes('facebook/feed') && feed.facebook.format==='page_video' && prov.meta && ids.facebook.ok) {
+        thumbnail.facebookPath=join(work,'facebook_thumbnail.jpg');
+        await extractThumbnail(bases.facebook.path,thumbnail.facebookPath,picked.seconds);
+      }
+      s.h(2,'Per-video thumbnail').kv([['Video',v.name],['Main-clip timestamp',`${picked.seconds}s`],['Selection',picked.source],['Reason',picked.reason]]);
+      s.p('Applied on supported routes: Instagram Reels, TikTok, regular YouTube via Upload-Post and regular Facebook Page video. Buffer YouTube Shorts, Facebook Reels and Stories keep platform defaults.');
+      if(o.preview && env('PREVIEW_DIR') && thumbnail.youtubePath) copyFileSync(thumbnail.youtubePath,join(env('PREVIEW_DIR'),'youtube_thumbnail.jpg'));
+    } else s.p('Thumbnail selection skipped: no selected, verified destination supports a custom thumbnail on the configured route.');
+
+    let tasks = buildTasks({ cfg, info, feed, stories, originalPath: original, captions, providers: prov, identities: ids, youtube, destinations, thumbnail, feedPaths: { instagram: bases.instagram.path, facebook: bases.facebook.path, tiktok: bases.tiktok.path } });
     if (o.filter) tasks = tasks.filter((t) => o.filter!.has(`${t.platform}:${t.surface}`));
 
     if (o.preview) {
@@ -461,6 +487,7 @@ async function batchPreflight(state: StateClient, parsed: Awaited<ReturnType<typ
     planOutros: [...Object.values(plan.outros), ...plan.entries.flatMap(j=>Object.values(j.outros))],
     publications: async fileId => (await state.publications({fileId})).publications,
     stillInFolder: id=>d.stillInFolder(id),
+    validateThumbnail:async(id,seconds)=>validateThumbnailDuration(seconds,await d.durationSec(id)),
   });
   return { entries, savedSettings: snapshot.settings };
 }
@@ -477,7 +504,7 @@ async function publishManualBatch(entries: BatchEntry[], state: StateClient, s: 
     try {
       const status = await publishFlow({
         runId:begin.runId,origin:'manual',policy:'fifo',pendingCustom:entry.pendingCustom,
-        outroOverrides:entry.outroOverrides,destinations:entry.destinations,summary:s,state,
+        outroOverrides:entry.outroOverrides,destinations:entry.destinations,thumbnailSec:entry.thumbnailSec,summary:s,state,
       });
       s.p(`Video result: **${status}**. Recover by this run ID; do not replay the successful batch entries.`);
       if (status !== 'completed') failures++;
@@ -548,6 +575,7 @@ async function cmdConfigure() {
         titleRule: resolved.titleRule,
         outroOverrides,
         destinations: resolved.destinations,
+        thumbnailSec: resolved.thumbnailSec,
         summary: s,
         state,
       });
@@ -570,6 +598,7 @@ async function cmdConfigure() {
   if (action === 'edit') {
     const interpreted = planText ? await interpretPlan(planText, model) : undefined;
     const entries = interpreted ? resolvePlan(interpreted, interpreted.some(e => e.policy === 'custom' || Object.values(e.outroNames ?? {}).some(name => name !== null)) ? await (await drive()).listVideos() : [], saved.entries) : undefined;
+    if(entries?.some(e=>e.custom.some(v=>v.thumbnailSec!=null)) && !saved.features?.perVideoThumbnails) throw new Error('Deploy the updated scheduler Worker before saving per-video thumbnail timestamps; no plan changes saved');
     if (entries && !saved.features?.destinationSelection) throw new Error('Deploy the updated scheduler Worker before editing destination choices; no plan changes saved');
     await state.changePlan({ action, entries, expectedRevision: saved.revision });
     s.p(planText ? 'Updated the publishing plan. Nothing was published now. Unchanged Custom lists retain their progress.' : 'Plan text left blank: retained the saved timetable/rule pairs and Custom progress.');
@@ -588,8 +617,8 @@ function outroDescription(choices: Record<string, {fileName:string} | null> = {}
   return entries.map(([platform,outro])=>`; ${platform} outro: ${outro ? quote(outro.fileName) : 'none'}`).join('');
 }
 
-function selectionDescription(entry: { policy: string; originalCustom?: {fileName:string}[]; titleRule?: TitleRule | null }) {
-  if (entry.policy === 'custom') return `custom: ${(entry.originalCustom ?? []).map(v => '"' + v.fileName.replace(/"/g, '""') + '"').join(', ')}`;
+function selectionDescription(entry: { policy: string; originalCustom?: {fileName:string;thumbnailSec?:number|null}[]; titleRule?: TitleRule | null }) {
+  if (entry.policy === 'custom') return `custom: ${(entry.originalCustom ?? []).map(v => '"' + v.fileName.replace(/"/g, '""') + '"' + (v.thumbnailSec!=null ? ` @ ${v.thumbnailSec}` : '')).join(', ')}`;
   if (entry.titleRule) return `${entry.titleRule.order} video whose title ${entry.titleRule.match.replace(/_/g, ' ')} ${JSON.stringify(entry.titleRule.text)}`;
   return entry.policy;
 }
@@ -713,19 +742,19 @@ async function cmdTools() {
     if (entries.length > 1) {
       const checked=await batchPreflight(state,entries);
       s.p('Read-only manual batch preview: preflight checked all filenames, outro assets, reservations and checkpoints. No publishing, archival, runs or plan changes.');
-      s.table(['Video','Destinations','Outros'],checked.entries.map(e=>[e.fileName,destinationDescription(e.destinations),outroDescription(e.outroOverrides).replace(/^; /,'') || 'saved default']));
-      console.log(JSON.stringify({preview:'batch',entries:checked.entries.map(e=>({fileName:e.fileName,destinations:e.destinations,outros:e.outroOverrides})),saved:false,published:false}));
+      s.table(['Video','Destinations','Outros','Thumbnail'],checked.entries.map(e=>[e.fileName,destinationDescription(e.destinations),outroDescription(e.outroOverrides).replace(/^; /,'') || 'saved default',e.thumbnailSec==null ? 'automatic for this video' : `${e.thumbnailSec}s`]));
+      console.log(JSON.stringify({preview:'batch',entries:checked.entries.map(e=>({fileName:e.fileName,destinations:e.destinations,outros:e.outroOverrides,thumbnailSec:e.thumbnailSec})),saved:false,published:false}));
     } else {
       const resolved=resolveManualEntry(entries[0],await (await drive()).listVideos());
-      s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Destinations',destinationDescription(resolved.destinations)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
+      s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Thumbnail',resolved.thumbnailSec==null ? 'automatic visual selection for this video' : `${resolved.thumbnailSec}s`],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Destinations',destinationDescription(resolved.destinations)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
       console.log(JSON.stringify({preview:'manual',destinations:resolved.destinations,saved:false,published:false}));
       s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
     }
   } else if (action === "plan_preview") {
     const interpreted = await interpretPlan(await flexiblePreview('plan',target),selectionModel());
-    console.log(JSON.stringify({preview:'plan',entries:interpreted.map(e=>({schedule:e.scheduleText,policy:e.policy,filenames:e.filenames,outros:e.outroNames??{},destinations:e.destinations})),saved:false,published:false}));
+    console.log(JSON.stringify({preview:'plan',entries:interpreted.map(e=>({schedule:e.scheduleText,policy:e.policy,filenames:e.filenames,thumbnailTimes:e.thumbnailTimes,outros:e.outroNames??{},destinations:e.destinations})),saved:false,published:false}));
     s.p('Interpreted plan, Europe/Sarajevo. Nothing was saved or published. Custom filenames are checked against Drive only when saving. A new every-N-days interval without a starting date uses the local save date; matching existing intervals keep their anchor.');
-    s.table(['Timetable', 'Selection', 'Destinations', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map(fileName=>({fileName}))}),destinationDescription(e.destinations),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
+    s.table(['Timetable', 'Selection', 'Destinations', 'Outros'], interpreted.map(e=>[e.scheduleText, selectionDescription({...e,originalCustom:e.filenames.map((fileName,i)=>({fileName,thumbnailSec:e.thumbnailTimes?.[i]}))}),destinationDescription(e.destinations),outroDescription(Object.fromEntries(Object.entries(e.outroNames ?? {}).map(([p,name])=>[p,name === null ? null : {fileName:name!}]))).replace(/^; /,'') || 'retain saved choice, otherwise default (outro)']));
   } else if (action === "rule_preview") {
     const interpreted = await interpretRuleEntry(await flexiblePreview('rule',target),selectionModel());
     s.p(`Interpreted rule: ${selectionDescription({...interpreted,originalCustom:interpreted.filenames.map(fileName=>({fileName}))})}. Destinations: ${destinationDescription(interpreted.destinations)}. Nothing was saved or published.`);

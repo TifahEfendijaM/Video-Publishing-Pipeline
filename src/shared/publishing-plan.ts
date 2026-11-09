@@ -1,6 +1,7 @@
 import type { CustomVideo, JobPolicy, TitleRule } from './job-selection';
 import { parseTimetable, formatTimetable, timetablesOverlap, type Timetable } from './timetable';
 import { validateDestinations, type Destination } from './destinations';
+import { validThumbnailSeconds } from './thumbnail';
 export type EntryOutros = Partial<Record<'youtube'|'tiktok'|'instagram'|'facebook', CustomVideo | null>>;
 
 export interface PlanEntryInput {
@@ -38,6 +39,7 @@ export function validatePlanEntries(input: PlanEntryInput[]): PlanEntryInput[] {
     if (!Array.isArray(schedule) && schedule.kind==='once' && entry.policy==='custom' && entry.custom.length!==1) throw new Error('A one-time Custom entry takes exactly one filename');
     if (entry.policy !== 'custom' && entry.custom.length) throw new Error('Only a Custom entry can have a filename list');
     for (const v of entry.custom) {
+      if (v.thumbnailSec != null && !validThumbnailSeconds(v.thumbnailSec)) throw new Error('Invalid per-video thumbnail timestamp');
       if (!v || !/^[A-Za-z0-9_-]{10,200}$/.test(v.fileId) || typeof v.fileName !== 'string' || !v.fileName.trim() || v.fileName.length > 300) throw new Error('Invalid Custom filename');
       if (customIds.has(v.fileId)) throw new Error('A video may appear in only one Custom list, once');
       customIds.add(v.fileId);

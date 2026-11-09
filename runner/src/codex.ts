@@ -99,7 +99,7 @@ export class CodexClient {
     this.encrypted(await this.auth());
   }
 
-  async run(system: string, user: string, schema: object, model = 'default'): Promise<unknown> {
+  async run(system: string, user: string, schema: object, model = 'default', images: string[] = []): Promise<unknown> {
     const auth = await this.auth();
     this.encrypted(auth);
     const directory = mkdtempSync(join(tmpdir(), 'eb-video-codex-'));
@@ -110,6 +110,14 @@ export class CodexClient {
       const authFile = join(authDir, 'auth.json'), output = join(work, 'result.json'), contract = join(work, 'schema.json');
       writeFileSync(authFile, auth, { mode: 0o600 });
       writeFileSync(contract, JSON.stringify(schema), { mode: 0o600 });
+      if(images.length>12) throw new Error('At most 12 thumbnail candidates may be inspected');
+      const attached=images.map((path,i)=>{
+        const bytes=readFileSync(path);
+        if(bytes.length>5*1024*1024 || bytes[0]!==0xff || bytes[1]!==0xd8) throw new Error('Invalid JPEG thumbnail candidate');
+        const dest=join(work,`candidate_${i}.jpg`);
+        writeFileSync(dest,bytes,{mode:0o600});
+        return dest;
+      });
       const args = ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check',
         '--sandbox', 'read-only', '--cd', work, '--color', 'never',
         '-c', 'approval_policy="never"', '-c', 'cli_auth_credentials_store="file"', '-c', 'web_search="disabled"',
@@ -117,6 +125,7 @@ export class CodexClient {
         '-c', 'features.shell_tool=false', '-c', 'features.apps=false', '-c', 'features.multi_agent=false',
         '--output-schema', contract, '--output-last-message', output];
       if (model && model !== 'default') args.push('--model', model);
+      for(const path of attached) args.push('--image',path);
       args.push('-');
       try {
         await new Promise<void>((resolve, reject) => {

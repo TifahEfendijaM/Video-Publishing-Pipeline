@@ -1,7 +1,7 @@
 import { isVideo, resolveCustomName, type FolderVideo, type SelectionPolicy } from "./selection";
 
 export type JobPolicy = SelectionPolicy | "custom" | "title_rule";
-export interface CustomVideo { fileId: string; fileName: string }
+export interface CustomVideo { fileId: string; fileName: string; thumbnailSec?: number | null }
 export interface TitleRule { match: "contains" | "starts_with" | "ends_with"; text: string; order: SelectionPolicy }
 
 /** CSV or newline-separated exact filenames. Quoted names may contain commas; doubled quotes escape quotes. */

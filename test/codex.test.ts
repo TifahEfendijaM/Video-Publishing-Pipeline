@@ -69,6 +69,14 @@ describe('subscription Codex execution',()=>{
     expect(f.state.putCredential.mock.calls[0][0]).toBe('video_codex_auth');
     expect(f.state.putCredential.mock.calls[0][1]).not.toContain('rotated-video-token');
   });
+  it('attaches only isolated JPEG candidates for visual inspection',async()=>{
+    const dir=mkdtempSync(join(tmpdir(),'codex-image-test-'));temporary.push(dir);
+    const path=join(dir,'candidate.jpg');writeFileSync(path,Buffer.from([255,216,255,217]));
+    const f=fixture("const image=args[args.indexOf('--image')+1];fs.writeFileSync(out,JSON.stringify({image,bytes:[...fs.readFileSync(image)]}));");
+    const result=await f.client.run('Pick a frame','video',{},'default',[path]) as any;
+    expect(result.image).not.toBe(path);expect(result.bytes).toEqual([255,216,255,217]);
+    expect(existsSync(result.image)).toBe(false);expect(existsSync(path)).toBe(true);
+  });
   it('uses stored credentials instead of an old seed, including after a failed model call',async()=>{
     const f=fixture(`const a=JSON.parse(fs.readFileSync(authFile,'utf8'));if(a.tokens.refresh_token!=='stored-video-token')process.exit(3);a.tokens.refresh_token='refreshed-after-failure';fs.writeFileSync(authFile,JSON.stringify(a));process.exit(1);`,auth('stored-video-token'));
     await expect(f.client.run('','',{})).rejects.toThrow(/CLI failed/);
