@@ -33,7 +33,7 @@ describe('manual batch parsing and preflight',()=>{
     expect(resolved[1].destinations).toEqual(['instagram/reel','youtube/video']);
     expect(resolved[0].outroOverrides.youtube).toBeNull();
     expect(resolved[1].outroOverrides.youtube).toEqual({fileId:'video-00003',fileName:'Ending.mp4'});
-    expect(deps.publications).toHaveBeenCalledTimes(4);
+    expect(deps.publications).toHaveBeenCalledTimes(3);
     const defaults=await interpretManualBatch('custom: "One.mp4" | custom: "Two.mp4"',noModel);
     expect(defaults[0].destinations).toContain('youtube/short');
     expect(defaults[0].destinations).toContain('youtube/video');
@@ -51,7 +51,7 @@ describe('manual batch parsing and preflight',()=>{
     }
     const reserved=dependencies();
     reserved.jobs.push({remaining:[{fileId:'video-00002',fileName:'Two.mp4'}]});
-    await expect(preflightManualBatch(await interpretManualBatch(input,noModel),reserved)).rejects.toThrow(/reserved/);
+    await expect(preflightManualBatch(await interpretManualBatch(input,noModel),reserved)).rejects.toThrow(/reservation/);
     const ambiguous=dependencies();
     ambiguous.videos.push(video('video-00005','One.mp4'));
     await expect(preflightManualBatch(await interpretManualBatch(input,noModel),ambiguous)).rejects.toThrow(/missing or ambiguous/);
