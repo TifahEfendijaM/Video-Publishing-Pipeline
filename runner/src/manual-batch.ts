@@ -84,10 +84,10 @@ export async function preflightManualBatch(
   for (const id of new Set([...selected, ...assetIds])) {
     if (!await deps.stillInFolder(id)) throw new Error(`Batch source or outro ${id} is no longer in the Drive input folder`);
   }
-  for (const entry of resolved) {
-    const rows = await deps.publications(entry.fileId);
+  for (const id of new Set([...selected, ...assetIds])) {
+    const rows = await deps.publications(id);
     if (rows.some(p => p.status === 'confirmed' || mayBeLive(p.status as Parameters<typeof mayBeLive>[0])))
-      throw new Error(`"${entry.fileName}" has existing confirmed/live/pending publication checkpoints; reconcile or resolve before a new batch`);
+      throw new Error(`"${deps.videos.find(v=>v.id===id)?.name ?? id}" has existing confirmed/live/pending publication checkpoints; reconcile or resolve before a new batch`);
   }
   return resolved;
 }
