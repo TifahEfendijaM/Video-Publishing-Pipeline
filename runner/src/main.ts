@@ -1,3 +1,4 @@
+import { interpretManualBatch, preflightManualBatch, type BatchEntry } from "./manual-batch";
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
 import type { ScheduledJob } from "../../worker/src/jobs";
 import { interpretPlan, interpretManualEntry, interpretRuleEntry, resolveManualEntry, resolvePlan } from "./publishing-plan";
@@ -71,7 +72,7 @@ async function cmdPrepareInput() {
   let planText=env('PUBLISHING_PLAN'),manualText=env('VIDEO_SELECTION');
   let expectedRevision='';
   if(cfg.captions.provider==='codex_cli') {
-    const kind=mode==='manual_now' ? 'manual' : action==='edit' && planText ? 'plan' : null;
+    const kind=mode==='manual_now' ? 'batch' : action==='edit' && planText ? 'plan' : null;
     const text=kind==='manual' ? manualText : planText;
     if(kind && text) {
       const saved=await stateClient().plan();
@@ -451,6 +452,45 @@ function reportResults(s: Summary, results: TaskResult[]) {
 // ---------------------------------------------------------------------------
 // Commands
 
+async function batchPreflight(state: StateClient, parsed: Awaited<ReturnType<typeof interpretManualBatch>>) {
+  const d = await drive();
+  const [videos, plan, snapshot] = await Promise.all([d.listVideos(),state.plan(),state.state()]);
+  const savedOutros = snapshot.settings.outros ?? {};
+  const entries = await preflightManualBatch(parsed, {
+    videos, jobs: plan.entries, savedOutros, defaultOutroFilename: cfg.outros?.defaultFileName ?? '',
+    planOutros: [...Object.values(plan.outros), ...plan.entries.flatMap(j=>Object.values(j.outros))],
+    publications: async fileId => (await state.publications({fileId})).publications,
+    stillInFolder: id=>d.stillInFolder(id),
+  });
+  return { entries, savedSettings: snapshot.settings };
+}
+
+async function publishManualBatch(entries: BatchEntry[], state: StateClient, s: Summary) {
+  let failures = 0;
+  s.h(2, 'Manual batch — independently recoverable video runs');
+  for (const [index, entry] of entries.entries()) {
+    s.h(3, `Video ${index+1}/${entries.length}: ${entry.fileName}`);
+    // Each video has its own durable run and publication checkpoints.
+    const begin = await state.beginRun({ origin:'manual', githubRunId:env('GITHUB_RUN_ID'), githubRunUrl:runUrl() });
+    if (!begin.allowed || !begin.runId) throw new Error('Could not allocate a durable batch video run');
+    s.kv([['Run ID',begin.runId],['Destinations',destinationDescription(entry.destinations)]]);
+    try {
+      const status = await publishFlow({
+        runId:begin.runId,origin:'manual',policy:'fifo',pendingCustom:entry.pendingCustom,
+        outroOverrides:entry.outroOverrides,destinations:entry.destinations,summary:s,state,
+      });
+      s.p(`Video result: **${status}**. Recover by this run ID; do not replay the successful batch entries.`);
+      if (!['completed','no_eligible_video'].includes(status)) failures++;
+    } catch (e) {
+      failures++;
+      s.p(`Video error: ${summarizeError(e)}. Inspect this run's durable checkpoints before retrying.`);
+      await state.finishRun({runId:begin.runId,status:'error',selectedFileId:entry.fileId,selectedFileName:entry.fileName}).catch(()=>{});
+    }
+  }
+  s.p(`Batch finished: ${entries.length - failures} completed/skipped, ${failures} require attention. Saved plan and schedule were not changed.`);
+  return failures;
+}
+
 async function cmdConfigure() {
   const s = new Summary();
   const state = stateClient();
@@ -462,7 +502,22 @@ async function cmdConfigure() {
   if (!["manual_now", "automated"].includes(mode)) throw new Error("run_mode must be manual_now or automated");
   s.h(1, `EasyBosnian video — ${mode}`);
   if (mode === "manual_now") {
-    const parsed = await interpretManualEntry(selection,model);
+    const manualEntries = selection.trim() ? await interpretManualBatch(selection, model) : [await interpretManualEntry(selection,model)];
+    const isBatch = manualEntries.length > 1;
+    // Validate all entries (and current state) before starting any individual video.
+    const checked = isBatch ? await batchPreflight(state,manualEntries) : null;
+    if (isBatch) {
+      if ((env('MANUAL_SCHEDULE_ACTION') || 'keep_schedule') !== 'keep_schedule')
+        throw new Error('Manual batches require keep_schedule; the existing publishing plan must remain unchanged');
+      const cfgView = await state.configureManual({selectionPolicy:null,scheduleBehavior:'keep',actor});
+      if (cfgView.manualScheduleBehavior !== 'keep') throw new Error('Worker does not support keep_schedule');
+      s.p('All batch sources, assets, scheduled reservations and existing publication checkpoints passed preflight. Saved plan and schedule retained.');
+      const failures = await publishManualBatch(checked!.entries,state,s);
+      s.write();
+      if (failures) throw new Error(`Batch completed with ${failures} video(s) requiring recovery; see run IDs in summary`);
+      return;
+    }
+    const parsed=manualEntries[0];
     const needsFiles=parsed.selection?.policy==='custom' || Object.values(parsed.outroNames).some(name=>name!==null);
     const resolved=resolveManualEntry(parsed,needsFiles ? await (await drive()).listVideos() : []);
     const {pendingCustom,policyChoice,outroOverrides}=resolved;
@@ -654,11 +709,18 @@ async function cmdTools() {
     s.code(captions.caption).code(captions.youtubeTitle).code(captions.youtubeDescription);
     s.list(captions.notes);
   } else if (action === "manual_preview") {
-    const parsed=await interpretManualEntry(await flexiblePreview('manual',target),selectionModel());
-    const resolved=resolveManualEntry(parsed,await (await drive()).listVideos());
-    s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Destinations',destinationDescription(resolved.destinations)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
-    console.log(JSON.stringify({preview:'manual',destinations:resolved.destinations,saved:false,published:false}));
-    s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
+    const entries=await interpretManualBatch(await flexiblePreview('batch',target),selectionModel());
+    if (entries.length > 1) {
+      const checked=await batchPreflight(state,entries);
+      s.p('Read-only manual batch preview: preflight checked all filenames, outro assets, reservations and checkpoints. No publishing, archival, runs or plan changes.');
+      s.table(['Video','Destinations','Outros'],checked.entries.map(e=>[e.fileName,destinationDescription(e.destinations),outroDescription(e.outroOverrides).replace(/^; /,'') || 'saved default']));
+      console.log(JSON.stringify({preview:'batch',entries:checked.entries.map(e=>({fileName:e.fileName,destinations:e.destinations,outros:e.outroOverrides})),saved:false,published:false}));
+    } else {
+      const resolved=resolveManualEntry(entries[0],await (await drive()).listVideos());
+      s.kv([['Video',resolved.pendingCustom?.fileName ?? resolved.policyChoice ?? 'saved one-off default'],['Title rule',JSON.stringify(resolved.titleRule ?? null)],['Destinations',destinationDescription(resolved.destinations)],['Outro',outroDescription(resolved.outroOverrides).replace(/^; /,'') || 'saved default']]);
+      console.log(JSON.stringify({preview:'manual',destinations:resolved.destinations,saved:false,published:false}));
+      s.p('Read-only manual entry preview. Nothing was saved or published; schedule and publishing switches were unchanged.');
+    }
   } else if (action === "plan_preview") {
     const interpreted = await interpretPlan(await flexiblePreview('plan',target),selectionModel());
     console.log(JSON.stringify({preview:'plan',entries:interpreted.map(e=>({schedule:e.scheduleText,policy:e.policy,filenames:e.filenames,outros:e.outroNames??{},destinations:e.destinations})),saved:false,published:false}));
