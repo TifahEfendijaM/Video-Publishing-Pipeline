@@ -10,7 +10,7 @@ on:
         type: choice
         required: true
         default: status
-        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed, plan_preview, manual_preview, caption_preview]
+        options: [status, verify, preview, dispatch_test, publishing_enable, publishing_disable, reconcile, resolve_publication, retry_failed, plan_preview, manual_preview, caption_preview, reset_deleted]
       target:
         description: "preview: optional filename to preview. resolve_publication: publication ID. retry_failed: run ID. plan_preview: paired weekly timetables and selection rules. manual_preview: single video or batch separated by |, each with destinations/outro; checks sources without publishing. caption_preview: exact video filename for an AI text preview. Otherwise ignored."
         type: string
@@ -25,6 +25,12 @@ on:
         description: "retry_failed only: optional comma-separated destinations, e.g. instagram/feed,youtube/short,tiktok/feed. Blank retries all current failures/skips."
         type: string
         required: false
+
+      previous_posts_deleted:
+        description: "reset_deleted only: confirm you deleted earlier platform posts. Target must contain exact custom filenames, separated by |. Does not upload videos."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -56,6 +62,7 @@ jobs:
         run: npx tsx runner/src/main.ts tools
         env:
           TOOL_ACTION: ${{ inputs.action }}
+          PREVIOUS_POSTS_DELETED: ${{ inputs.previous_posts_deleted }}
           TOOL_TARGET: ${{ inputs.target }}
           TOOL_RESOLUTION: ${{ inputs.resolution }}
           TOOL_DESTINATIONS: ${{ inputs.destinations }}
@@ -91,4 +98,21 @@ jobs:
           name: story-preview
           path: preview/
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Ensure readable failure report
+        if: failure()
+        env:
+          REPORT: ${{ runner.temp }}/video-failure-report.md
+        run: |
+          if [ ! -f "$REPORT" ]; then
+            printf '%s\n' '# Video pipeline failure report' '' 'A workflow setup step failed or the runner stopped before it could write detailed diagnostics. Open the first failed step above. If publishing had begun, check provider results and reconcile before retrying; do not replay successful uploads.' > "$REPORT"
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Downloadable failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-failure-report
+          path: ${{ runner.temp }}/video-failure-report.md
           retention-days: 7

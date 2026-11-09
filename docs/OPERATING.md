@@ -405,3 +405,14 @@ Unannotated filenames are automatic. Editing the timestamps retains list progres
 Applied routes: Instagram Reel cover timestamp; TikTok Buffer thumbnail offset; regular YouTube via Upload-Post custom JPEG; regular Facebook Page video preferred thumbnail. The current Buffer YouTube Shorts, Facebook Reels and Story routes keep their platform default cover; the run summary reports this limitation. Facebook thumbnail failures are reported separately from an already-confirmed video and never cause re-uploading.
 
 `manual_preview` validates/displays each entry and any explicit batch timestamps without sending videos or calling image inspection. Tools `preview` prepares media and inspects that video's candidate frames without publishing. Timestamped batches validate all explicit timestamps against Drive video-duration metadata before starting the first upload.
+
+
+## Fresh uploads after deleting earlier posts
+
+Normal manual runs (`manual_publication_action: protect_existing`) keep duplicate protection. If you deleted the previous platform posts and want a new upload, choose **fresh_after_deleting**. It requires exact Custom filenames, validates the entire batch and its assets first, then explicitly resets only those files' old checkpoints. It preserves the publishing plan, Custom-list progress, Drive files and earlier run reports. The reset is audited. Existing processing/uncertain outcomes or active runs must be reconciled/resolved first; a deleted visible post does not prove a queued upload was cancelled.
+
+To prepare those same files without publishing, use **Pipeline tools → reset_deleted**, put the exact manual entry/batch in target, and check **previous_posts_deleted**. Then rerun with the default protect_existing mode. Never use the fresh option for videos whose prior posts are still live. Re-running a genuinely failed destination uses retry_failed instead.
+
+## Failure reports
+
+Failed preparation, preflight and publishing runs now write a **Video pipeline failure report** in the Actions summary and a downloadable **video-failure-report** artifact (7-day retention). It identifies the failing stage, redacted cause, whether any upload may have started, and recovery instructions. Earlier video results remain visible if a later batch video fails. Failed/skipped/pending destinations make the publishing job require attention even when another destination succeeds. Setup failures get a fallback report pointing to the failed step. Provider secrets and raw tokens are not included.

@@ -78,3 +78,20 @@ jobs:
           VIDEO_CODEX_AUTH_JSON: ${{ secrets.VIDEO_CODEX_AUTH_JSON }}
           VIDEO_CODEX_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
           GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Ensure readable failure report
+        if: failure()
+        env:
+          REPORT: ${{ runner.temp }}/video-failure-report.md
+        run: |
+          if [ ! -f "$REPORT" ]; then
+            printf '%s\n' '# Video pipeline failure report' '' 'A workflow setup step failed or the runner stopped before it could write detailed diagnostics. Open the first failed step above. If publishing had begun, check provider results and reconcile before retrying; do not replay successful uploads.' > "$REPORT"
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Downloadable failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-failure-report
+          path: ${{ runner.temp }}/video-failure-report.md
+          retention-days: 7

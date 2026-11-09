@@ -9,6 +9,7 @@ import {
   configureManual,
   consumeCustom,
   completeVideo,
+  resetDeletedPublications,
   dispatchTest,
   finishRun,
   getCredential,
@@ -113,6 +114,8 @@ export async function route(req: Request, env: Env): Promise<Response> {
       return json(await finishRun(db, b, now));
     case "/api/videos/complete":
       return json(await completeVideo(db, String(b.fileId ?? "")));
+    case "/api/publications/reset-deleted":
+      return json(await resetDeletedPublications(db,b,now));
     case "/api/publications/upsert":
       return json(await upsertPublication(db, b, now));
     case "/api/credentials/get":

@@ -407,6 +407,24 @@ export async function completeVideo(db: Db, fileId: string) {
   return { ok: true };
 }
 
+/** Explicit recovery after the owner deletes earlier platform posts. Never advances a Custom list. */
+export async function resetDeletedPublications(db:Db, req:{fileIds:string[];acknowledgement:string;actor?:string}, nowMs:number) {
+  if(req.acknowledgement!=='previous_posts_deleted' || !Array.isArray(req.fileIds) || !req.fileIds.length || req.fileIds.length>20 || new Set(req.fileIds).size!==req.fileIds.length || req.fileIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{10,200}$/.test(id)))
+    throw new HttpError(400,'Choose exact files and explicitly confirm previous platform posts were deleted');
+  const ids=JSON.stringify(req.fileIds);
+  const held=await db.prepare('SELECT file_id FROM job_reservations WHERE file_id IN (SELECT value FROM json_each(?))').bind(ids).all();
+  if(held.results.length) throw new HttpError(409,'Cannot reset a video reserved by a scheduled Custom list');
+  const rows=(await db.prepare('SELECT * FROM publications WHERE file_id IN (SELECT value FROM json_each(?))').bind(ids).all<any>()).results;
+  if(rows.some(p=>['initiated','processing','uncertain'].includes(p.status))) throw new HttpError(409,'Open publication outcomes must be reconciled or resolved before resetting deleted posts; queued uploads may still publish');
+  const running=await db.prepare("SELECT run_id FROM runs WHERE status='running' AND (selected_file_id IN (SELECT value FROM json_each(?)) OR run_id IN (SELECT run_id FROM publications WHERE file_id IN (SELECT value FROM json_each(?))))").bind(ids,ids).all();
+  if(running.results.length) throw new HttpError(409,'Cannot reset publication checkpoints while a source run is active');
+  await db.batch([
+    db.prepare('INSERT INTO event_log(at,kind,detail) VALUES(?,?,?)').bind(iso(nowMs),'publications.reset_deleted',JSON.stringify({actor:req.actor ?? 'github',fileIds:req.fileIds,previousCheckpoints:rows})),
+    db.prepare('DELETE FROM publications WHERE file_id IN (SELECT value FROM json_each(?))').bind(ids),
+  ]);
+  return {ok:true,files:req.fileIds.length,cleared:rows.length};
+}
+
 export async function upsertPublication(
   db: Db,
   p: { runId: string; fileId: string; platform: string; surface: string; provider?: string; format?: string; status: string; remoteId?: string | null; url?: string | null; detail?: string | null },

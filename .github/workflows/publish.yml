@@ -32,6 +32,13 @@ on:
         default: keep_schedule
         options: [keep_schedule, pause_schedule]
 
+      manual_publication_action:
+        description: "protect_existing prevents duplicates. fresh_after_deleting starts over for exact filenames ONLY after you deleted earlier platform posts; refuses unresolved uploads."
+        type: choice
+        required: true
+        default: protect_existing
+        options: [protect_existing, fresh_after_deleting]
+
 permissions:
   contents: read
 
@@ -84,6 +91,7 @@ jobs:
           PUBLISHING_PLAN: ${{ steps.prepare.outputs.publishing_plan }}
           EXPECTED_PLAN_REVISION: ${{ steps.prepare.outputs.expected_plan_revision }}
           MANUAL_SCHEDULE_ACTION: ${{ inputs.manual_schedule_action }}
+          MANUAL_PUBLICATION_ACTION: ${{ inputs.manual_publication_action }}
           VIDEO_SELECTION: ${{ steps.prepare.outputs.video_selection }}
           STATE_API_URL: ${{ vars.STATE_API_URL }}
           PUBLISHED_DRIVE_FOLDER_ID: ${{ vars.PUBLISHED_DRIVE_FOLDER_ID }}
@@ -109,3 +117,20 @@ jobs:
           VIDEO_CODEX_AUTH_JSON: ${{ secrets.VIDEO_CODEX_AUTH_JSON }}
           VIDEO_CODEX_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
           GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Ensure readable failure report
+        if: failure()
+        env:
+          REPORT: ${{ runner.temp }}/video-failure-report.md
+        run: |
+          if [ ! -f "$REPORT" ]; then
+            printf '%s\n' '# Video pipeline failure report' '' 'A workflow setup step failed or the runner stopped before it could write detailed diagnostics. Open the first failed step above. If publishing had begun, check provider results and reconcile before retrying; do not replay successful uploads.' > "$REPORT"
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Downloadable failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-failure-report
+          path: ${{ runner.temp }}/video-failure-report.md
+          retention-days: 7

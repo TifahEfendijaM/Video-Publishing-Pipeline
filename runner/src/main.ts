@@ -1,3 +1,4 @@
+import { saveFailureReport } from './failure-report';
 import { chooseThumbnail, extractThumbnail, validateThumbnailDuration } from './thumbnails';
 import { interpretManualBatch, preflightManualBatch, type BatchEntry } from "./manual-batch";
 import { matchesTitle, type TitleRule } from "../../src/shared/job-selection";
@@ -33,6 +34,7 @@ import { planFeed, planStory, planYouTubeVersions } from "../../src/shared/media
 import { redact, summarizeError } from "../../src/shared/redact";
 import { selectRetryPublications } from "./retry";
 
+let providerExecutionStarted=false;
 const sec = secrets();
 const cfg = loadConfig();
 const env = (n: string) => (process.env[n] ?? "").trim();
@@ -433,6 +435,7 @@ async function publishFlow(o: PublishOpts): Promise<string> {
     }
 
     const host = hosting((note) => s.p(note));
+    providerExecutionStarted=true;
     const { results, hostedKeys } = await executeTasks(o.runId, v.id, tasks, {
       mayPublish: (id) => o.state.mayPublish(id),
       record: async (r) => {
@@ -457,6 +460,12 @@ async function publishFlow(o: PublishOpts): Promise<string> {
 }
 
 function reportResults(s: Summary, results: TaskResult[]) {
+  const failures=results.filter(r=>r.status!=='confirmed' && r.status!=='unsupported');
+  if(failures.length) {
+    saveFailureReport(new Error(failures.map(r=>`${r.platform}/${r.surface}: ${r.status}: ${r.detail ?? 'needs attention'}`).join('; ')),'publication results',providerExecutionStarted);
+    process.exitCode=1;
+  }
+
   s.h(2, "Publication results");
   s.table(
     ["Platform", "Surface", "Format", "Provider", "Status", "Link / ID", "Detail"],
@@ -478,12 +487,12 @@ function reportResults(s: Summary, results: TaskResult[]) {
 // ---------------------------------------------------------------------------
 // Commands
 
-async function batchPreflight(state: StateClient, parsed: Awaited<ReturnType<typeof interpretManualBatch>>) {
+async function batchPreflight(state: StateClient, parsed: Awaited<ReturnType<typeof interpretManualBatch>>, allowDeletedSources=false) {
   const d = await drive();
   const [videos, plan, snapshot] = await Promise.all([d.listVideos(),state.plan(),state.state()]);
   const savedOutros = snapshot.settings.outros ?? {};
   const entries = await preflightManualBatch(parsed, {
-    videos, jobs: plan.entries, savedOutros, defaultOutroFilename: cfg.outros?.defaultFileName ?? '',
+    videos, jobs: plan.entries, allowDeletedSources, savedOutros, defaultOutroFilename: cfg.outros?.defaultFileName ?? '',
     planOutros: [...Object.values(plan.outros), ...plan.entries.flatMap(j=>Object.values(j.outros))],
     publications: async fileId => (await state.publications({fileId})).publications,
     stillInFolder: id=>d.stillInFolder(id),
@@ -530,6 +539,14 @@ async function cmdConfigure() {
   s.h(1, `EasyBosnian video — ${mode}`);
   if (mode === "manual_now") {
     const manualEntries = selection.trim() ? await interpretManualBatch(selection, model) : [await interpretManualEntry(selection,model)];
+    const publicationAction=env('MANUAL_PUBLICATION_ACTION') || 'protect_existing';
+    if(!['protect_existing','fresh_after_deleting'].includes(publicationAction)) throw new Error('Invalid manual publication action');
+    if(publicationAction==='fresh_after_deleting') {
+      if(manualEntries.some(e=>e.selection?.policy!=='custom')) throw new Error('Fresh uploads after deleting posts require exact Custom filenames');
+      const checked=await batchPreflight(state,manualEntries,true);
+      const reset=await state.resetDeletedPublications(checked.entries.map(e=>e.fileId),actor);
+      s.p(`Owner confirmed previous platform posts deleted: reset ${reset.cleared} old checkpoint(s) for these exact ${reset.files} source file(s). Preserved the saved plan and Custom-list progress.`);
+    }
     const isBatch = manualEntries.length > 1;
     // Validate all entries (and current state) before starting any individual video.
     const checked = isBatch ? await batchPreflight(state,manualEntries) : null;
@@ -767,6 +784,14 @@ async function cmdTools() {
     await publishFlow({ runId: begin.runId, origin: "manual", policy: st.settings.selectionPolicy, customName: target || null, pendingCustom: target ? null : st.settings.pendingCustom, preview: true, summary: s, state: readOnly(state) });
   } else if (action === "reconcile") {
     await reconcile(s, state);
+  } else if (action === "reset_deleted") {
+    if(env('PREVIOUS_POSTS_DELETED')!=='true') throw new Error('Check previous_posts_deleted only after deleting the previous platform posts');
+    const parsed=await interpretManualBatch(target,noModel);
+    if(parsed.some(e=>e.selection?.policy!=='custom')) throw new Error('reset_deleted requires exact Custom filenames');
+    const checked=await batchPreflight(state,parsed,true);
+    const reset=await state.resetDeletedPublications(checked.entries.map(e=>e.fileId),actor);
+    s.p(`Reset ${reset.cleared} previous checkpoint(s) for ${reset.files} exact source file(s) after owner confirmation. No videos published, moved or removed; saved schedule and list progress retained.`);
+    console.log(JSON.stringify({reset_deleted:reset,files:checked.entries.map(e=>e.fileName),published:false}));
   } else if (action === "resolve_publication") {
     if (!/^\d+$/.test(target) || !["confirmed", "failed"].includes(resolution)) throw new Error("resolve_publication needs target = publication ID and resolution = confirmed|failed");
     const pub = (await state.publications({ id: Number(target) })).publications[0];
@@ -796,7 +821,7 @@ async function cmdTools() {
 function readOnly(state: StateClient): StateClient {
   return new Proxy(state, {
     get(target, prop, recv) {
-      if (["completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "changePlan", "configureAutomated", "setPublishing"].includes(String(prop))) {
+      if (["resetDeletedPublications", "completeVideo", "upsertPublication", "finishRun", "consumeCustom", "configureManual", "changePlan", "configureAutomated", "setPublishing"].includes(String(prop))) {
         return async () => {
           throw new Error(`preview is read-only (${String(prop)})`);
         };
@@ -941,6 +966,7 @@ if (!handlers[cmd]) {
   process.exit(2);
 }
 handlers[cmd]().catch((e) => {
+  saveFailureReport(e,cmd,providerExecutionStarted,env("VIDEO_SELECTION") || env("PUBLISHING_PLAN") || env("TOOL_TARGET"));
   console.error(`ERROR: ${summarizeError(e, 500)}`);
   process.exit(1);
 });
