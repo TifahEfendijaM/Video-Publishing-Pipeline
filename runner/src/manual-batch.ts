@@ -70,7 +70,7 @@ export async function preflightManualBatch(
     resolved.push({ ...item, fileId, fileName });
   }
   const assetIds = new Set<string>(resolved.flatMap(e => Object.values(e.outroOverrides).flatMap(v => v ? [v.fileId] : [])));
-  for (const entry of resolved) for (const platform of ['youtube','tiktok','instagram','facebook']) {
+  for (const entry of resolved) for (const platform of ['youtube','tiktok','instagram','facebook'] as const) {
     const saved = platform in entry.outroOverrides ? entry.outroOverrides[platform] : deps.savedOutros?.[platform];
     const outro = effectiveOutro(saved, deps.videos, deps.defaultOutroFilename ?? '');
     if (outro) assetIds.add(outro.fileId);
