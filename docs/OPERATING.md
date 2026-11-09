@@ -373,3 +373,18 @@ The Worker durably claims each due plan entry independently, then dispatches a b
 occurrences sequentially. This avoids losing an occurrence if GitHub replaces an older pending concurrency run.
 Another batch can drain still-pending claims; started claims cannot be executed twice. One entry failing
 does not discard the other entries. Missed clock ticks are not invented or backfilled.
+
+
+## Manual batch publishing (GitHub-hosted only)
+
+From **Actions → Publish video → Run workflow**, choose `manual_now`, keep `manual_schedule_action=keep_schedule`, and put 2–20 exact Drive filenames in `video_selection`. Separate entries by ` | ` or newlines, including independent platform/YouTube-format and outro choices. Natural language is interpreted by the dedicated subscription Codex CLI on GitHub-hosted Actions; canonical entries can be entered directly. A missing destinations clause means every configured platform, including both eligible YouTube Short and regular video versions.
+
+Example:
+
+```text
+custom: "Lesson One.mp4"; destinations: youtube/short; outro: none | custom: "Lesson Two.mp4"; destinations: instagram/reel, youtube/video; outro: "Ending.mp4"
+```
+
+Batch preflight resolves every exact filename and explicit outro, rejects duplicates, scheduled Custom reservations, missing/ambiguous or non-video files, overlap between source videos and outro assets, and existing confirmed or possibly-live publication checkpoints. It checks Drive folder membership before any publishing begins. A failure aborts the entire batch before allocating per-video runs. During execution, videos are published sequentially, each with its own durable run ID and publication recovery records. Successful uploads must **not** be replayed; use **Pipeline tools → reconcile**, **resolve_publication**, or **retry_failed** with the affected run ID and destination. Reused outro files stay in the source folder and are not independently selected for publication.
+
+For a read-only validation, use **Actions → Pipeline tools → manual_preview** with the same text in `target`. It previews the whole batch's resolved filenames, destinations and outro choices without uploading, archiving, allocating publishing runs, or modifying the saved plan. The original single-video manual behavior remains available. Batch runs deliberately require `keep_schedule`; scheduled publishing is unaffected.
