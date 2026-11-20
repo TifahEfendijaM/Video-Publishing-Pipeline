@@ -27,7 +27,7 @@ const VOWELS = /[aeiouyàáâäåèéêëìíîïòóôöùúûü]/i;
 
 export interface FilenameAnalysis {
   meaningful: boolean;
-  topicHint: string | null; // filename-derived topic hint (data, never instructions)
+  topicHint: string | null; // condensed filename text used for analysis and summaries
   stem: string;
   reason: string;
 }

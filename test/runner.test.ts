@@ -364,7 +364,19 @@ describe("captions (free Cloudflare Workers AI model, injectable for tests)", ()
     expect(r.source).toBe("generated");
     expect(r.caption).toBe(`${good.topic_caption}\n${good.website_invitation}\n👉easybosnian.com`);
     expect(r.caption).toContain("jednu kafu, molim"); // Bosnian phrase kept with correct spelling inside English text
-    expect(prompt).toContain('"kako naruciti kafu"'); // filename passed as quoted data
+    expect(prompt).toBe('VIDEO FILENAME STEM: "kako_naruciti_kafu"');
+  });
+
+  it("sends the full filename and scopes its writing directions to this video", async () => {
+    const stem = 'Naručiti kafu u Sarajevu — open the caption with a friendly question for someone ordering at a café for the first time, and include "jednu kafu, molim".';
+    const run = vi.fn(async (_system: string, _user: string) => good);
+    const result = await makeCaptions(`${stem}.mp4`, { model: "m", run });
+
+    expect(result.source).toBe("generated");
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("follow it as editorial guidance for this video only"),
+      `VIDEO FILENAME STEM: ${JSON.stringify(stem)}`,
+    );
   });
 
   it("rejects bad output (not English, CEFR, foreign link) and retries once, then falls back", async () => {

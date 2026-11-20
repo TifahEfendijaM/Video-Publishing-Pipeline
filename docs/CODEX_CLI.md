@@ -69,8 +69,12 @@ and change nothing. The result must pass the existing timetable, selection, list
 the save step rechecks filenames and the plan revision. Formatted input skips AI entirely.
 Scheduled runs reuse the saved selection rules; they do not reinterpret the plan on each occurrence.
 
-Meaningful filenames generate captions/titles for the selected video on demand. Generic filenames
-use reviewed generic copy without a model call. Ordinary model failures or rejected text use the
+Meaningful filenames generate captions, YouTube titles and descriptions for the selected video on
+demand. Codex receives the filename without its extension and follows clear writing directions in
+the name for that video only. For example, `Bosnian coffee — open the caption with a question.mp4`
+sets the topic and directs how the caption should begin. A plain title supplies the topic. Directions
+stay out of the public copy and are limited to writing under the existing caption rules. Generic
+filenames use reviewed generic copy without a model call. Ordinary model failures or rejected text use the
 reported generic fallback; credential integrity/storage failures stop the run before uploading.
 Each CLI invocation has a five-minute timeout. Validation can request one caption revision.
 
