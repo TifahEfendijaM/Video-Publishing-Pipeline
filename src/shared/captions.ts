@@ -40,7 +40,6 @@ function isNoiseToken(tok: string): boolean {
   if (/^\(?\d+\)?$/.test(t)) return true;
   if (/^[0-9a-f]{6,}$/i.test(t) && /\d/.test(t)) return true; // hex IDs
   if (/\d/.test(t) && /\p{L}/u.test(t)) return true; // mixed letters+digits: IDs, codes, camera labels
-  if (t.length <= 2) return true;
   if (!VOWELS.test(t) && !/r/.test(t)) return true; // consonant soup (Bosnian syllabic r allowed: "prst", "crn")
   if (/(.)\1\1/.test(t)) return true; // "aaaa", "xxx"
   return false;
@@ -59,13 +58,12 @@ export function analyzeFilename(filename: string): FilenameAnalysis {
   // Remove dates / times before tokenising further.
   const noDates = spaced
     .replace(/\b\d{4}\s?\d{2}\s?\d{2}\b/g, " ")
-    .replace(/\b\d{1,2}\s\d{1,2}\s\d{2,4}\b/g, " ")
+    .replace(/\b(?:at\s+)?\d{1,2}\s\d{1,2}\s\d{2,4}\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   const tokens = noDates.split(" ").filter(Boolean);
   const words = tokens.filter((t) => !isNoiseToken(t));
-  const letters = words.join("").replace(/[^\p{L}]/gu, "").length;
-  if (words.length === 0 || letters < 4) {
+  if (words.length === 0) {
     return {
       meaningful: false,
       topicHint: null,

@@ -353,7 +353,7 @@ Bosnian). A Bosnian word or phrase from the topic may appear, spelled with corre
 - Filenames made of IDs, numbers, dates or generic camera/export/AI-tool labels (e.g.
   `gemini_generated_video_0A28F2A0.mp4`, `178904548924381.mp4`, `Made with Veo 3.mp4`) get the reviewed
   generic English caption in `config/generic-caption.json` — no topic is invented. Edit that file to change it.
-- Meaningful filenames (e.g. `na vrh brda vrba mrda.mp4`) supply a topic for Codex to write about.
+- Meaningful filenames supply a topic for Codex to write about. A single short word such as `Pas.mp4` is enough.
   You can also include writing directions for that video in the filename. For example,
   `Bosnian coffee — open the caption with a question and keep it playful.mp4` guides the caption's
   opening and tone. You can name the YouTube title or description if a direction applies there.

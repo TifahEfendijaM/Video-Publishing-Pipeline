@@ -358,13 +358,13 @@ describe("captions (free Cloudflare Workers AI model, injectable for tests)", ()
     expect(r.notes.join()).toMatch(/Workers AI/);
   });
 
-  it("valid model output becomes a topic caption ending with the exact website line", async () => {
+  it.each(["kako_naruciti_kafu", "Pas", "Ja"])("generates a topic caption with the exact website line for %s", async (stem) => {
     let prompt = "";
-    const r = await makeCaptions("kako_naruciti_kafu.mp4", { model: "m", run: async (_s, u) => ((prompt = u), good) });
+    const r = await makeCaptions(`${stem}.mp4`, { model: "m", run: async (_s, u) => ((prompt = u), good) });
     expect(r.source).toBe("generated");
     expect(r.caption).toBe(`${good.topic_caption}\n${good.website_invitation}\n👉easybosnian.com`);
     expect(r.caption).toContain("jednu kafu, molim"); // Bosnian phrase kept with correct spelling inside English text
-    expect(prompt).toBe('VIDEO FILENAME STEM: "kako_naruciti_kafu"');
+    expect(prompt).toBe(`VIDEO FILENAME STEM: ${JSON.stringify(stem)}`);
   });
 
   it("sends the full filename and scopes its writing directions to this video", async () => {

@@ -43,6 +43,10 @@ describe("filename analysis", () => {
     expect(a.topicHint).toContain(hint.split(" ")[0]);
   });
 
+  it.each(["Pas", "Čaj", "Ja", "U"])("accepts the short topic %s", (topic) => {
+    expect(analyzeFilename(`${topic}.mp4`)).toMatchObject({ meaningful: true, topicHint: topic });
+  });
+
   it("preserves punctuation in the complete filename stem", () => {
     const a = analyzeFilename('Kafa — open with "Jednu kafu, molim".mp4');
     expect(a.meaningful).toBe(true);
